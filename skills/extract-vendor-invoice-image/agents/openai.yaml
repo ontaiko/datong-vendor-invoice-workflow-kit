@@ -1,0 +1,4 @@
+interface:
+  display_name: "進貨圖片擷取"
+  short_description: "使用本機 PaddleOCR 辨識廠商進貨單並輸出商品明細試算表"
+  default_prompt: "使用 $extract-vendor-invoice-image，以本機 PaddleOCR 從廠商進貨圖片擷取商品明細並輸出試算表。"

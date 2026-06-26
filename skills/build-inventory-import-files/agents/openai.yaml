@@ -1,0 +1,4 @@
+interface:
+  display_name: "建檔採購匯入"
+  short_description: "依 xls 範本建立建檔與採購匯入檔"
+  default_prompt: "使用 $build-inventory-import-files，依建檔用與採購單匯入範本產生正式 xls 檔。"

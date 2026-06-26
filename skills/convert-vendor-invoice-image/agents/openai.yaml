@@ -1,0 +1,4 @@
+interface:
+  display_name: "進貨流程管理"
+  short_description: "自動判斷進貨圖片並管理建檔採購流程"
+  default_prompt: "使用 $convert-vendor-invoice-image，判斷上傳圖片是否為廠商進貨單，並管理擷取、比對、覆核與正式匯入檔輸出。"

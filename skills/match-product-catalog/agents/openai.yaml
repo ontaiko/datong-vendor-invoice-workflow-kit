@@ -1,0 +1,4 @@
+interface:
+  display_name: "產品重複比對"
+  short_description: "檢查產品資料日期並比對進貨試算表商品"
+  default_prompt: "使用 $match-product-catalog，將進貨商品試算表與產品資料輸出 CSV 進行既有商品比對。"

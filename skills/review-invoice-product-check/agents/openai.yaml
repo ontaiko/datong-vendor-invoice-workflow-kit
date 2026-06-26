@@ -1,0 +1,4 @@
+interface:
+  display_name: "檢查進貨單"
+  short_description: "檢查產品代號並產生品名與大類調整檔"
+  default_prompt: "使用 $review-invoice-product-check，檢查這份產品比對檢查表，補齊產品代號後調整品名與大類，並輸出調整檔。"

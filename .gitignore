@@ -1,0 +1,13 @@
+.venv-paddleocr/
+.codex-tmp/
+__pycache__/
+*.pyc
+build/
+dist/
+*.log
+*.tmp
+~$*
+engine/wheelhouse/
+engine/*.zip
+project/建檔進貨用/**/*.xlsx
+project/建檔進貨用/**/*.xls
