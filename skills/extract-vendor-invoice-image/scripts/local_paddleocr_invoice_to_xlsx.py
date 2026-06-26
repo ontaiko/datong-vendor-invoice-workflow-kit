@@ -20,8 +20,15 @@ from openpyxl.utils import get_column_letter
 from PIL import Image, ImageEnhance, ImageFilter, ImageOps
 from paddleocr import PaddleOCR
 
+try:
+    import cv2
+    import numpy as np
+except ImportError:
+    cv2 = None
+    np = None
 
-PROJECT_ROOT = Path(os.environ.get("DATONG_WORKSPACE", Path.home() / "Documents" / "大統工作助手"))
+
+PROJECT_ROOT = Path(r"C:\Users\user\Documents\大統工作助手")
 DEFAULT_OUTPUT_DIR = PROJECT_ROOT / "建檔進貨用" / "進貨圖片轉試算表"
 DEFAULT_TMP_DIR = PROJECT_ROOT / ".codex-tmp" / "local-paddleocr"
 DEFAULT_SETTINGS_PATH = PROJECT_ROOT / "參考資料" / "OCR設定.json"
@@ -237,11 +244,26 @@ def make_photo_variant(
     else:
         rotate_name = "none"
 
-    gray = ImageOps.grayscale(image)
-    enhanced = ImageEnhance.Contrast(gray).enhance(contrast)
-    enhanced = ImageEnhance.Sharpness(enhanced).enhance(sharpness).convert("RGB")
-    save(f"photo_{rotate_name}_gray_contrast", enhanced)
+    enhanced = enhance_for_ocr(image, contrast, sharpness)
+    save(f"photo_{rotate_name}_opencv_ocr" if cv2 is not None else f"photo_{rotate_name}_gray_contrast", enhanced)
     return variants
+
+
+def enhance_for_ocr(image: Image.Image, contrast: float, sharpness: float) -> Image.Image:
+    if cv2 is None or np is None:
+        gray = ImageOps.grayscale(image)
+        enhanced = ImageEnhance.Contrast(gray).enhance(contrast)
+        return ImageEnhance.Sharpness(enhanced).enhance(sharpness).convert("RGB")
+
+    rgb = np.array(image.convert("RGB"))
+    gray = cv2.cvtColor(rgb, cv2.COLOR_RGB2GRAY)
+    denoised = cv2.fastNlMeansDenoising(gray, None, 8, 7, 21)
+    clahe = cv2.createCLAHE(clipLimit=max(1.0, contrast), tileGridSize=(8, 8))
+    enhanced = clahe.apply(denoised)
+    if sharpness > 1:
+        blurred = cv2.GaussianBlur(enhanced, (0, 0), 1.0)
+        enhanced = cv2.addWeighted(enhanced, sharpness, blurred, 1 - sharpness, 0)
+    return Image.fromarray(enhanced).convert("RGB")
 
 
 def make_multi_variants(image_path: Path, tmp_dir: Path, contrast: float, sharpness: float) -> list[tuple[str, Path]]:
@@ -259,22 +281,10 @@ def make_multi_variants(image_path: Path, tmp_dir: Path, contrast: float, sharpn
     save("rot90ccw", image.rotate(90, expand=True))
     save("rot180", image.rotate(180, expand=True))
 
-    gray = ImageOps.grayscale(image)
-    enhanced = ImageEnhance.Contrast(gray).enhance(contrast)
-    enhanced = ImageEnhance.Sharpness(enhanced).enhance(sharpness).convert("RGB")
+    enhanced = enhance_for_ocr(image, contrast, sharpness)
     save("gray_contrast", enhanced)
-    save(
-        "rot90cw_gray_contrast",
-        ImageEnhance.Sharpness(
-            ImageEnhance.Contrast(ImageOps.grayscale(image.rotate(-90, expand=True))).enhance(contrast)
-        ).enhance(sharpness).convert("RGB"),
-    )
-    save(
-        "rot90ccw_gray_contrast",
-        ImageEnhance.Sharpness(
-            ImageEnhance.Contrast(ImageOps.grayscale(image.rotate(90, expand=True))).enhance(contrast)
-        ).enhance(sharpness).convert("RGB"),
-    )
+    save("rot90cw_gray_contrast", enhance_for_ocr(image.rotate(-90, expand=True), contrast, sharpness))
+    save("rot90ccw_gray_contrast", enhance_for_ocr(image.rotate(90, expand=True), contrast, sharpness))
     return variants
 
 

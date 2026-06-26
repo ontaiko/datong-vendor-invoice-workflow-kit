@@ -5,7 +5,8 @@
 - 進貨流程 skills
 - 大統工作助手專案規則
 - 商品與廠商參考資料
-- OCR 設定與本機 PaddleOCR 安裝腳本
+- OCR 設定與本機 OpenCV / PaddleOCR 安裝腳本
+- RapidFuzz 本地商品相似度比對規則
 
 本工作包完全依賴 Codex 執行流程，不包含額外桌面程式。
 
@@ -45,10 +46,12 @@ powershell -NoProfile -ExecutionPolicy Bypass -File ".\install.ps1"
 
 上傳或提供進貨單圖片時，Codex 會依 `AGENTS.md` 與 `convert-vendor-invoice-image` 啟動流程：
 
-1. OCR 圖片轉試算表
-2. 產品資料比對
+1. OpenCV 圖片前處理後，用 PaddleOCR 圖片轉試算表
+2. RapidFuzz 搭配產品資料 CSV 做本地產品資料比對
 3. 產品名稱、大類、產品代號覆核
 4. 建檔用與採購匯入檔輸出
+
+原則是先用本地引擎處理穩定、可重複的判定，AI 只協助低信心項目、疑點整理與人工確認清單。
 
 ## 更新產品資料
 
@@ -68,6 +71,20 @@ powershell -NoProfile -ExecutionPolicy Bypass -File ".\install.ps1"
 %USERPROFILE%\Documents\大統工作助手\.venv-paddleocr
 ```
 
-並安裝 `engine\requirements-ocr.txt` 內的 PaddleOCR 相關套件。
+並安裝 `engine\requirements-ocr.txt` 內的 OpenCV、PaddleOCR、RapidFuzz 相關套件。
 
 如果 repo release 內另外提供 `official_models.zip`，可放到 `engine\official_models.zip` 後重跑 `install.ps1`，腳本會解壓到 `%USERPROFILE%\.paddlex\official_models`。
+
+## 驗證
+
+更新或安裝後可執行本地規則測試：
+
+```powershell
+.\.venv-paddleocr\Scripts\python.exe -X utf8 ".\scripts\test-local-engine-rules.py"
+```
+
+測試會檢查：
+
+- RapidFuzz 商品比對能分出 `已建檔`、`有類似產品`、`確認為新品`。
+- 低可信雜訊候選不會進入人工確認清單。
+- 已填產品代號但品名差異過大時，檢查表會加註解與淡黃色提醒。
