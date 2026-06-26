@@ -90,7 +90,7 @@ if (Test-Path -LiteralPath $modelZip) {
     Expand-Archive -LiteralPath $modelZip -DestinationPath $modelRoot -Force
 }
 
-& $venvPython -X utf8 -c "import paddle; import paddleocr; import openpyxl; from PIL import Image; print('OCR engine OK')"
+& $venvPython -X utf8 -c "import paddle; import paddleocr; import openpyxl; import cv2; import rapidfuzz; from PIL import Image; print('OCR engine OK')"
 if ($LASTEXITCODE -ne 0) {
     throw "OCR engine validation failed."
 }
