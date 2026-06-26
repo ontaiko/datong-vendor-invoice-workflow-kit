@@ -1,6 +1,19 @@
 # 給同事貼到 Codex 的安裝指令
 
-請用 GitHub 讀取 `ontaiko/datong-vendor-invoice-workflow-kit`，把 repo 下載到本機，然後執行 repo 根目錄的 `install.ps1`。
+同事只需要在 Codex 貼下面這段：
+
+```text
+https://github.com/ontaiko/datong-vendor-invoice-workflow-kit
+
+幫我安裝這個
+```
+
+Codex 讀到後要做的事情：
+
+1. 使用 GitHub 讀取 `ontaiko/datong-vendor-invoice-workflow-kit`。
+2. 把 repo 下載到本機。
+3. 執行 repo 根目錄的 `install.ps1`。
+4. 安裝完成後提醒使用者重開 Codex。
 
 安裝要求：
 

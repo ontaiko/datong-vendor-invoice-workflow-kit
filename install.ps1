@@ -2,7 +2,6 @@ param(
     [string]$ProjectRoot = "",
     [string]$CodexHome = "",
     [switch]$SkipEngine,
-    [switch]$BuildTools,
     [switch]$NoEnvUpdate
 )
 
@@ -85,17 +84,6 @@ if (-not $NoEnvUpdate) {
 
 if (-not $SkipEngine) {
     & (Join-Path $packageRoot "scripts\install-ocr-engine.ps1") -ProjectRoot $ProjectRoot -PackageRoot $packageRoot
-}
-
-if ($BuildTools) {
-    $batchBuild = Join-Path $ProjectRoot "tools\invoice_image_to_spreadsheet_app\build_exe.ps1"
-    $fullBuild = Join-Path $ProjectRoot "tools\invoice_ocr_excel_app\build_exe.ps1"
-    if (Test-Path -LiteralPath $batchBuild) {
-        powershell -NoProfile -ExecutionPolicy Bypass -File $batchBuild -WorkspaceRoot $ProjectRoot
-    }
-    if (Test-Path -LiteralPath $fullBuild) {
-        powershell -NoProfile -ExecutionPolicy Bypass -File $fullBuild -WorkspaceRoot $ProjectRoot
-    }
 }
 
 Write-Host ""
