@@ -18,5 +18,7 @@
     "Microsoft Excel COM for final legacy XLS output"
   ],
   "installer": "install.ps1",
-  "verification": "scripts/verify-install.ps1"
+  "verification": "scripts/verify-install.ps1",
+  "project_memory": "memory-seed/datong-project-memory.md",
+  "installed_project_memory": "PROJECT_MEMORY.md"
 }

@@ -5,6 +5,7 @@
 - 進貨流程 5 個 skills（總管＋4 個可獨立執行的子技能）
 - 大統工作助手專案規則
 - 商品與廠商參考資料
+- 整個大統工作助手的可攜式專案記憶
 - OCR 設定與本機引擎自動安裝／驗證腳本
 
 本工作包完全依賴 Codex 執行流程，不包含額外桌面程式。
@@ -25,7 +26,8 @@ Codex 應執行的工作：
 2. 下載或 clone repo 到本機。
 3. 執行 repo 根目錄的 `install.ps1`。
 4. 確認 5 個技能、本機引擎與專案參考資料通過驗證。
-5. 安裝完成後，提醒使用者重開 Codex。
+5. 確認專案根目錄已建立 `PROJECT_MEMORY.md`。
+6. 安裝完成後，提醒使用者重開 Codex。
 
 手動安裝時，在 repo 根目錄執行：
 
@@ -55,6 +57,18 @@ powershell -NoProfile -ExecutionPolicy Bypass -File ".\install.ps1"
 - `match-product-catalog`
 - `review-invoice-product-check`
 - `build-inventory-import-files`
+
+## 專案記憶
+
+`memory-seed/datong-project-memory.md` 保存整個大統工作助手的可攜式記憶，包括使用者偏好、進貨流程、預購檢查、Gmail 收單、封面套圖、PDF／Line 文案、停止節點與已知故障。
+
+安裝時會複製到：
+
+```text
+%USERPROFILE%\Documents\大統工作助手\PROJECT_MEMORY.md
+```
+
+原始聊天、帳號、token、郵件識別碼與機器狀態不會放進公開 repo。這份記憶提供專案上下文，但不會讓舊聊天自動出現在另一台電腦的 Codex 側邊欄。
 
 ## Codex 內使用
 
@@ -103,6 +117,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File ".\install.ps1"
 
 - 5 個技能與必要腳本是否齊全
 - 專案規則、OCR 設定、產品資料、廠商資料與 `.xls` 範本是否齊全
+- `PROJECT_MEMORY.md` 是否已安裝
 - PaddleOCR、OpenCV、openpyxl、RapidFuzz 等 Python 套件能否匯入
 - Python 環境是否有相依衝突
 - Excel COM 是否可用

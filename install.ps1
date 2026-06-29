@@ -96,11 +96,18 @@ foreach ($skillName in $skillNames) {
 }
 
 $projectPackageRoot = Join-Path $packageRoot "project"
+$memorySeedSource = Join-Path $packageRoot "memory-seed\datong-project-memory.md"
+$memoryTarget = Join-Path $ProjectRoot "PROJECT_MEMORY.md"
+if (-not (Test-Path -LiteralPath $memorySeedSource -PathType Leaf)) {
+    throw "Project memory seed is missing: $memorySeedSource"
+}
 Get-ChildItem -LiteralPath $projectPackageRoot -Recurse -File | ForEach-Object {
     $relative = $_.FullName.Substring($projectPackageRoot.Length + 1)
     Backup-ExistingItem -Source (Join-Path $ProjectRoot $relative) -RelativeDestination (Join-Path "project" $relative)
 }
+Backup-ExistingItem -Source $memoryTarget -RelativeDestination "project\PROJECT_MEMORY.md"
 Copy-DirectoryContents -Source (Join-Path $packageRoot "project") -Destination $ProjectRoot
+Copy-Item -LiteralPath $memorySeedSource -Destination $memoryTarget -Force
 
 New-Item -ItemType Directory -Force -Path `
     (Join-Path $ProjectRoot ".codex-tmp"), `
@@ -118,6 +125,7 @@ foreach ($skillName in $skillNames) {
 $rewriteFiles += Get-ChildItem -LiteralPath $projectPackageRoot -Recurse -File |
     Where-Object { $rewriteExtensions -contains $_.Extension.ToLowerInvariant() } |
     ForEach-Object { Join-Path $ProjectRoot $_.FullName.Substring($projectPackageRoot.Length + 1) }
+$rewriteFiles += $memoryTarget
 Update-TextPaths -Files $rewriteFiles
 
 if (-not $NoEnvUpdate) {
@@ -144,6 +152,7 @@ Write-Host ""
 Write-Host "Install complete."
 Write-Host "Project: $ProjectRoot"
 Write-Host "Codex skills: $skillsTarget"
+Write-Host "Project memory: $memoryTarget"
 if (Test-Path -LiteralPath $backupRoot) {
     Write-Host "Previous files backup: $backupRoot"
 }

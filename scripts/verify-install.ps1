@@ -38,6 +38,7 @@ $requiredReferenceNames = @(
 
 $requiredFiles = @(
     (Join-Path $ProjectRoot "AGENTS.md"),
+    (Join-Path $ProjectRoot "PROJECT_MEMORY.md"),
     ($requiredReferenceNames | ForEach-Object { Join-Path (Join-Path $ProjectRoot $referenceFolder) $_ })
 )
 
@@ -89,4 +90,5 @@ if (-not $SkipExcelCheck) {
 
 Write-Host "Five workflow skills: OK"
 Write-Host "Project references: OK"
+Write-Host "Portable project memory: OK"
 Write-Host "Installation verification complete."
