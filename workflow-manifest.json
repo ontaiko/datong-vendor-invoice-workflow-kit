@@ -1,0 +1,22 @@
+{
+  "name": "datong-vendor-invoice-workflow-kit",
+  "version": "2026.06.29",
+  "platform": "windows",
+  "skills": [
+    "convert-vendor-invoice-image",
+    "extract-vendor-invoice-image",
+    "match-product-catalog",
+    "review-invoice-product-check",
+    "build-inventory-import-files"
+  ],
+  "local_engines": [
+    "Python 3.12 virtual environment",
+    "OpenCV",
+    "PaddleOCR and PaddlePaddle",
+    "openpyxl",
+    "RapidFuzz",
+    "Microsoft Excel COM for final legacy XLS output"
+  ],
+  "installer": "install.ps1",
+  "verification": "scripts/verify-install.ps1"
+}

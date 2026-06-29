@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import re
@@ -20,8 +21,15 @@ from openpyxl.utils import get_column_letter
 from PIL import Image, ImageEnhance, ImageFilter, ImageOps
 from paddleocr import PaddleOCR
 
+try:
+    import cv2
+    import numpy as np
+except ImportError:
+    cv2 = None
+    np = None
 
-PROJECT_ROOT = Path(os.environ.get("DATONG_WORKSPACE", Path.home() / "Documents" / "大統工作助手"))
+
+PROJECT_ROOT = Path(r"C:\Users\user\Documents\大統工作助手")
 DEFAULT_OUTPUT_DIR = PROJECT_ROOT / "建檔進貨用" / "進貨圖片轉試算表"
 DEFAULT_TMP_DIR = PROJECT_ROOT / ".codex-tmp" / "local-paddleocr"
 DEFAULT_SETTINGS_PATH = PROJECT_ROOT / "參考資料" / "OCR設定.json"
@@ -46,12 +54,32 @@ KEY_TERMS = [
     "GSC",
 ]
 
-PRODUCT_CODE_RE = re.compile(r"^\s*(?:\d+\s*)?((?:[A-Z]{2,8}-[A-Z0-9]+)|(?:\d{6}))\s*(.*)$")
+PRODUCT_CODE_RE = re.compile(
+    r"^\s*(?:\d+\s*)?((?:[A-Z]{2,8}-[A-Z0-9]+)|(?:[A-Z]{2,8}\d{4,})|(?:\d{6}))\s*(.*)$"
+)
 NUMBER_RE = re.compile(r"-?\d+(?:,\d{3})*(?:\.\d+)?")
 MONEY_DECIMAL_RE = re.compile(r"\d,\d{3}\.\d+|\d{2,4}\.\d+")
-MONEY_INTEGER_RE = re.compile(r"\d{1,3}(?:,\d{3})+|\d{4,6}")
+MONEY_INTEGER_RE = re.compile(r"-?(?:\d{1,3}(?:,\d{3})+|\d{1,6})")
 QUANTITY_RE = re.compile(r"[Vv]?\s*(\d{1,3})\s*(?:個|个|PCS|Pcs|pcs)")
-SUSPICIOUS_SIMPLIFIED_CHARS = set("种号机宝绒挂车岛与坏")
+TRADITIONAL_CHAR_MAP = str.maketrans(
+    {
+        "种": "種",
+        "号": "號",
+        "机": "機",
+        "宝": "寶",
+        "绒": "絨",
+        "挂": "掛",
+        "车": "車",
+        "岛": "島",
+        "与": "與",
+        "坏": "壞",
+        "猫": "貓",
+        "樱": "櫻",
+        "欧": "歐",
+        "丽": "麗",
+    }
+)
+SUSPICIOUS_SIMPLIFIED_CHARS = set("种号机宝绒挂车岛与坏猫樱欧丽")
 UNIT_TOKENS = {"抽", "個", "个", "PCS", "Pcs", "pcs"}
 GOOD_ENOUGH_PRODUCT_CODE_HITS = 2
 GOOD_ENOUGH_KEY_HITS = 2
@@ -102,6 +130,8 @@ def parse_number_text(value: str) -> float | None:
 
 
 def extract_quantity(text: str) -> int | None:
+    if text.strip().lower() == "d":
+        return 4
     match = QUANTITY_RE.search(text)
     if match:
         return int(match.group(1))
@@ -124,6 +154,8 @@ def extract_decimal_money(text: str) -> float | None:
 
 
 def extract_integer_money(text: str) -> float | None:
+    if "." in text:
+        return None
     matches = list(MONEY_INTEGER_RE.finditer(text))
     if not matches:
         return None
@@ -146,6 +178,13 @@ def suspicious_name_issues(name: str) -> list[str]:
     if re.search(r"\b[a-z]\d{3,}\b", name):
         issues.append("品名含疑似星號或符號誤讀的英文字母數字片段")
     return issues
+
+
+def normalize_ocr_name(name: str) -> str:
+    normalized = name.translate(TRADITIONAL_CHAR_MAP)
+    normalized = re.sub(r"[＊*]\s*\d+(?:\.\d+)?\s*$", "", normalized)
+    normalized = re.sub(r"(?<=[\u4e00-\u9fff])\s+(?=[\u4e00-\u9fff])", "", normalized)
+    return normalized.strip()
 
 
 def is_unit_token(text: str) -> bool:
@@ -173,6 +212,58 @@ def unique_output_path(output_dir: Path, vendor: str) -> Path:
         if not candidate.exists():
             return candidate
     raise RuntimeError(f"無法建立不重複檔名：{prefix}-NN.xlsx")
+
+
+def process_is_running(pid: int) -> bool:
+    if pid <= 0:
+        return False
+    if os.name == "nt":
+        import ctypes
+
+        process_query_limited_information = 0x1000
+        handle = ctypes.windll.kernel32.OpenProcess(process_query_limited_information, False, pid)
+        if not handle:
+            return False
+        ctypes.windll.kernel32.CloseHandle(handle)
+        return True
+    try:
+        os.kill(pid, 0)
+        return True
+    except OSError:
+        return False
+
+
+def acquire_image_lock(image_path: Path) -> Path:
+    lock_dir = DEFAULT_TMP_DIR / ".locks"
+    lock_dir.mkdir(parents=True, exist_ok=True)
+    digest = hashlib.sha1(str(image_path).lower().encode("utf-8")).hexdigest()[:12]
+    lock_path = lock_dir / f"{image_path.stem}-{digest}.lock"
+
+    for _ in range(2):
+        try:
+            fd = os.open(lock_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+        except FileExistsError:
+            try:
+                current_pid = int(lock_path.read_text(encoding="utf-8").splitlines()[0])
+            except (OSError, ValueError, IndexError):
+                current_pid = 0
+            if process_is_running(current_pid):
+                raise SystemExit(f"同一張圖片正在 OCR：{image_path}（PID {current_pid}）。請等待原程序完成。")
+            lock_path.unlink(missing_ok=True)
+            continue
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write(f"{os.getpid()}\n{image_path}\n")
+        return lock_path
+    raise SystemExit(f"無法取得 OCR 圖片鎖：{lock_path}")
+
+
+def release_image_lock(lock_path: Path) -> None:
+    try:
+        lines = lock_path.read_text(encoding="utf-8").splitlines()
+        if lines and int(lines[0]) == os.getpid():
+            lock_path.unlink(missing_ok=True)
+    except (OSError, ValueError):
+        pass
 
 
 def edge_orientation_score(image: Image.Image) -> float:
@@ -206,8 +297,54 @@ def auto_rotate_document(image: Image.Image) -> tuple[str, Image.Image]:
         ("rot180", image.rotate(180, expand=True)),
     ]
     scored = [(edge_orientation_score(candidate), name, candidate) for name, candidate in candidates]
-    _, name, best = max(scored, key=lambda item: item[0])
+    best_score, name, best = max(scored, key=lambda item: item[0])
+    none_score, _, none_image = scored[0]
+    # Table borders often make 0/90-degree scores nearly identical. Keep the
+    # source direction unless another direction is materially better.
+    if none_score >= best_score * 0.95:
+        return "none", none_image
     return name, best
+
+
+def split_stacked_pages(image: Image.Image) -> list[tuple[str, Image.Image]]:
+    if cv2 is None or np is None:
+        return [("page1", image)]
+    width, height = image.size
+    if height < width * 1.15:
+        return [("page1", image)]
+
+    gray = cv2.cvtColor(np.array(image.convert("RGB")), cv2.COLOR_RGB2GRAY)
+    ink_ratio = (gray < 180).mean(axis=1)
+    edge_ratio = cv2.Canny(gray, 50, 150).mean(axis=1) / 255.0
+    signal = ink_ratio + edge_ratio
+    smooth = np.convolve(signal, np.ones(9) / 9, mode="same")
+    low = int(height * 0.35)
+    high = int(height * 0.65)
+    center = smooth[low:high]
+    if center.size == 0:
+        return [("page1", image)]
+
+    local_index = int(center.argmin())
+    split_y = low + local_index
+    minimum = float(center[local_index])
+    baseline = float(np.median(center))
+    if baseline < 0.06 or minimum > min(0.065, baseline * 0.5):
+        return [("page1", image)]
+    if not (height * 0.30 <= split_y <= height * 0.70):
+        return [("page1", image)]
+
+    threshold = minimum + (baseline - minimum) * 0.20
+    band_top = split_y
+    band_bottom = split_y
+    while band_top > low and smooth[band_top - 1] <= threshold:
+        band_top -= 1
+    while band_bottom < high - 1 and smooth[band_bottom + 1] <= threshold:
+        band_bottom += 1
+    split_y = (band_top + band_bottom) // 2
+    return [
+        ("page1", image.crop((0, 0, width, split_y))),
+        ("page2", image.crop((0, split_y, width, height))),
+    ]
 
 
 def make_photo_variant(
@@ -216,6 +353,7 @@ def make_photo_variant(
     rotation: str,
     contrast: float,
     sharpness: float,
+    page_split: str,
 ) -> list[tuple[str, Path]]:
     tmp_dir.mkdir(parents=True, exist_ok=True)
     image = ImageOps.exif_transpose(Image.open(image_path)).convert("RGB")
@@ -226,22 +364,42 @@ def make_photo_variant(
         img.save(out, quality=95)
         variants.append((name, out))
 
-    if rotation == "auto":
-        rotate_name, image = auto_rotate_document(image)
-    elif rotation == "cw":
-        rotate_name, image = "rot90cw", image.rotate(-90, expand=True)
-    elif rotation == "ccw":
-        rotate_name, image = "rot90ccw", image.rotate(90, expand=True)
-    elif rotation == "180":
-        rotate_name, image = "rot180", image.rotate(180, expand=True)
-    else:
-        rotate_name = "none"
+    pages = split_stacked_pages(image) if page_split == "auto" else [("page1", image)]
+    multi_page = len(pages) > 1
+    for page_name, page_image in pages:
+        if rotation == "auto":
+            rotate_name, page_image = auto_rotate_document(page_image)
+        elif rotation == "cw":
+            rotate_name, page_image = "rot90cw", page_image.rotate(-90, expand=True)
+        elif rotation == "ccw":
+            rotate_name, page_image = "rot90ccw", page_image.rotate(90, expand=True)
+        elif rotation == "180":
+            rotate_name, page_image = "rot180", page_image.rotate(180, expand=True)
+        else:
+            rotate_name = "none"
 
-    gray = ImageOps.grayscale(image)
-    enhanced = ImageEnhance.Contrast(gray).enhance(contrast)
-    enhanced = ImageEnhance.Sharpness(enhanced).enhance(sharpness).convert("RGB")
-    save(f"photo_{rotate_name}_gray_contrast", enhanced)
+        enhanced = enhance_for_ocr(page_image, contrast, sharpness)
+        page_part = f"_{page_name}" if multi_page else ""
+        engine_part = "opencv_ocr" if cv2 is not None else "gray_contrast"
+        save(f"photo{page_part}_{rotate_name}_{engine_part}", enhanced)
     return variants
+
+
+def enhance_for_ocr(image: Image.Image, contrast: float, sharpness: float) -> Image.Image:
+    if cv2 is None or np is None:
+        gray = ImageOps.grayscale(image)
+        enhanced = ImageEnhance.Contrast(gray).enhance(contrast)
+        return ImageEnhance.Sharpness(enhanced).enhance(sharpness).convert("RGB")
+
+    rgb = np.array(image.convert("RGB"))
+    gray = cv2.cvtColor(rgb, cv2.COLOR_RGB2GRAY)
+    denoised = cv2.fastNlMeansDenoising(gray, None, 8, 7, 21)
+    clahe = cv2.createCLAHE(clipLimit=max(1.0, contrast), tileGridSize=(8, 8))
+    enhanced = clahe.apply(denoised)
+    if sharpness > 1:
+        blurred = cv2.GaussianBlur(enhanced, (0, 0), 1.0)
+        enhanced = cv2.addWeighted(enhanced, sharpness, blurred, 1 - sharpness, 0)
+    return Image.fromarray(enhanced).convert("RGB")
 
 
 def make_multi_variants(image_path: Path, tmp_dir: Path, contrast: float, sharpness: float) -> list[tuple[str, Path]]:
@@ -259,22 +417,10 @@ def make_multi_variants(image_path: Path, tmp_dir: Path, contrast: float, sharpn
     save("rot90ccw", image.rotate(90, expand=True))
     save("rot180", image.rotate(180, expand=True))
 
-    gray = ImageOps.grayscale(image)
-    enhanced = ImageEnhance.Contrast(gray).enhance(contrast)
-    enhanced = ImageEnhance.Sharpness(enhanced).enhance(sharpness).convert("RGB")
+    enhanced = enhance_for_ocr(image, contrast, sharpness)
     save("gray_contrast", enhanced)
-    save(
-        "rot90cw_gray_contrast",
-        ImageEnhance.Sharpness(
-            ImageEnhance.Contrast(ImageOps.grayscale(image.rotate(-90, expand=True))).enhance(contrast)
-        ).enhance(sharpness).convert("RGB"),
-    )
-    save(
-        "rot90ccw_gray_contrast",
-        ImageEnhance.Sharpness(
-            ImageEnhance.Contrast(ImageOps.grayscale(image.rotate(90, expand=True))).enhance(contrast)
-        ).enhance(sharpness).convert("RGB"),
-    )
+    save("rot90cw_gray_contrast", enhance_for_ocr(image.rotate(-90, expand=True), contrast, sharpness))
+    save("rot90ccw_gray_contrast", enhance_for_ocr(image.rotate(90, expand=True), contrast, sharpness))
     return variants
 
 
@@ -314,7 +460,7 @@ def is_bad_auto_rotation_result(result: dict[str, Any]) -> bool:
 
 def score_ocr_result(result: dict[str, Any]) -> tuple[int, int, int, int, int, float]:
     try:
-        rows, _issues = parse_rows(result["entries"])
+        rows, _issues = parse_result_rows(result)
     except Exception:
         rows = []
     valid_rows = sum(1 for row in rows if row.check == "通過")
@@ -326,6 +472,38 @@ def score_ocr_result(result: dict[str, Any]) -> tuple[int, int, int, int, int, f
         result["line_count"],
         result["avg_score"],
     )
+
+
+def parse_result_rows(result: dict[str, Any]) -> tuple[list[ProductRow], list[str]]:
+    page_entries = result.get("page_entries") or [result["entries"]]
+    rows: list[ProductRow] = []
+    issues: list[str] = []
+    for page_index, entries in enumerate(page_entries, start=1):
+        page_rows, page_issues = parse_rows(entries)
+        rows.extend(page_rows)
+        issues.extend(f"第{page_index}頁：{issue}" for issue in page_issues)
+    return rows, issues
+
+
+def merge_page_entries(page_entries: list[list[OcrEntry]]) -> list[OcrEntry]:
+    merged: list[OcrEntry] = []
+    y_offset = 0
+    for entries in page_entries:
+        page_bottom = 0
+        for entry in entries:
+            shifted_box = [entry.box[0], entry.box[1] + y_offset, entry.box[2], entry.box[3] + y_offset]
+            merged.append(
+                OcrEntry(
+                    text=entry.text,
+                    score=entry.score,
+                    box=shifted_box,
+                    x=entry.x,
+                    y=entry.y + y_offset,
+                )
+            )
+            page_bottom = max(page_bottom, entry.box[3])
+        y_offset += page_bottom + 80
+    return merged
 
 
 def opposite_rotation_from_variant(variant: str) -> str | None:
@@ -356,6 +534,7 @@ def run_ocr(
     multi_variant: bool,
     contrast: float,
     sharpness: float,
+    page_split: str,
 ) -> tuple[dict[str, Any], list[dict[str, Any]], dict[str, float]]:
     timings: dict[str, float] = {}
     start = time.perf_counter()
@@ -367,37 +546,68 @@ def run_ocr(
     if multi_variant:
         variant_batches.append(make_multi_variants(image_path, tmp_dir, contrast, sharpness))
     else:
-        variant_batches.append(make_photo_variant(image_path, tmp_dir, rotation, contrast, sharpness))
+        variant_batches.append(make_photo_variant(image_path, tmp_dir, rotation, contrast, sharpness, page_split))
 
     for batch_index, variants in enumerate(variant_batches):
-        for name, variant_path in variants:
-            predict_start = time.perf_counter()
-            pages = ocr.predict(str(variant_path))
-            predict_seconds = round(time.perf_counter() - predict_start, 3)
-            entries = extract_entries(pages[0]) if pages else []
+        if not multi_variant and len(variants) > 1:
+            page_entries: list[list[OcrEntry]] = []
+            page_paths: list[str] = []
+            page_names: list[str] = []
+            predict_seconds = 0.0
+            for name, variant_path in variants:
+                predict_start = time.perf_counter()
+                pages = ocr.predict(str(variant_path))
+                predict_seconds += time.perf_counter() - predict_start
+                entries = extract_entries(pages[0]) if pages else []
+                page_entries.append(entries)
+                page_paths.append(str(variant_path))
+                page_names.append(name)
+            entries = merge_page_entries(page_entries)
             key_hits = sum(1 for item in entries if any(term in item.text for term in KEY_TERMS))
             product_code_hits = sum(1 for item in entries if PRODUCT_CODE_RE.match(item.text))
             avg_score = round(sum(item.score for item in entries) / len(entries), 4) if entries else 0
-            result = {
-                "variant": name,
-                "path": str(variant_path),
-                "line_count": len(entries),
-                "avg_score": avg_score,
-                "key_hits": key_hits,
-                "product_code_hits": product_code_hits,
-                "predict_seconds": predict_seconds,
-                "entries": entries,
-            }
-            results.append(result)
-            if multi_variant and is_good_enough_result(result):
-                break
+            results.append(
+                {
+                    "variant": f"split_{len(variants)}pages:" + ",".join(page_names),
+                    "path": "\n".join(page_paths),
+                    "line_count": len(entries),
+                    "avg_score": avg_score,
+                    "key_hits": key_hits,
+                    "product_code_hits": product_code_hits,
+                    "predict_seconds": round(predict_seconds, 3),
+                    "entries": entries,
+                    "page_entries": page_entries,
+                }
+            )
+        else:
+            for name, variant_path in variants:
+                predict_start = time.perf_counter()
+                pages = ocr.predict(str(variant_path))
+                predict_seconds = round(time.perf_counter() - predict_start, 3)
+                entries = extract_entries(pages[0]) if pages else []
+                key_hits = sum(1 for item in entries if any(term in item.text for term in KEY_TERMS))
+                product_code_hits = sum(1 for item in entries if PRODUCT_CODE_RE.match(item.text))
+                avg_score = round(sum(item.score for item in entries) / len(entries), 4) if entries else 0
+                result = {
+                    "variant": name,
+                    "path": str(variant_path),
+                    "line_count": len(entries),
+                    "avg_score": avg_score,
+                    "key_hits": key_hits,
+                    "product_code_hits": product_code_hits,
+                    "predict_seconds": predict_seconds,
+                    "entries": entries,
+                }
+                results.append(result)
+                if multi_variant and is_good_enough_result(result):
+                    break
         if multi_variant:
             break
 
         if rotation == "auto" and batch_index == 0 and results and is_bad_auto_rotation_result(results[-1]):
             retry_rotation = opposite_rotation_from_variant(results[-1]["variant"])
             if retry_rotation:
-                variant_batches.append(make_photo_variant(image_path, tmp_dir, retry_rotation, contrast, sharpness))
+                variant_batches.append(make_photo_variant(image_path, tmp_dir, retry_rotation, contrast, sharpness, page_split))
                 continue
         break
     best = sorted(
@@ -510,14 +720,31 @@ def parse_rows(entries: list[OcrEntry]) -> tuple[list[ProductRow], list[str]]:
         code_entries.append((entry, match.group(1), match.group(2).strip()))
 
     code_entries.sort(key=lambda item: item[0].y)
+    row_spacings = [
+        code_entries[i + 1][0].y - code_entries[i][0].y
+        for i in range(len(code_entries) - 1)
+        if code_entries[i + 1][0].y > code_entries[i][0].y
+    ]
+    typical_spacing = median(row_spacings) if row_spacings else 50
     rows: list[ProductRow] = []
     global_issues: list[str] = []
     for idx, (code_entry, code, trailing_name) in enumerate(code_entries):
-        next_y = code_entries[idx + 1][0].y if idx + 1 < len(code_entries) else total_y
-        name_start_y = code_entry.y - 22
-        name_end_y = next_y - 22
-        numeric_start_y = code_entry.y - 8
-        numeric_end_y = next_y - 8
+        previous_code = code_entries[idx - 1][0] if idx > 0 else None
+        next_code = code_entries[idx + 1][0] if idx + 1 < len(code_entries) else None
+        row_start_y = (
+            previous_code.y + (code_entry.y - previous_code.y) * 0.90
+            if previous_code is not None
+            else code_entry.box[1] - 3
+        )
+        next_y = (
+            code_entry.y + (next_code.y - code_entry.y) * 0.90
+            if next_code is not None
+            else min(total_y, code_entry.y + typical_spacing * 1.8)
+        )
+        name_start_y = row_start_y
+        name_end_y = next_y
+        numeric_start_y = row_start_y
+        numeric_end_y = next_y
         row_entries = [entry for entry in entries if name_start_y <= entry.y < numeric_end_y]
 
         name_parts: list[str] = []
@@ -534,7 +761,7 @@ def parse_rows(entries: list[OcrEntry]) -> tuple[list[ProductRow], list[str]]:
         name_right = min(name_right_candidates)
         quantity_left = positions["quantity"] - 120
         unit_cost_left = min(positions["unit_cost"], positions["quantity"]) - 70
-        amount_left = positions["amount"] - 110
+        amount_left = positions["amount"] - max(20, (positions["amount"] - positions["unit_cost"]) * 0.25)
         for entry in sorted(row_entries, key=lambda item: (item.y, item.x)):
             if entry is code_entry:
                 continue
@@ -577,9 +804,6 @@ def parse_rows(entries: list[OcrEntry]) -> tuple[list[ProductRow], list[str]]:
         amount = None
         if amount_candidates:
             amount = amount_candidates[-1]
-        elif numeric_by_col["amount"]:
-            fallback_amount_candidates = [n for n in numeric_by_col["amount"] if n >= 0]
-            amount = fallback_amount_candidates[0] if fallback_amount_candidates else numeric_by_col["amount"][0]
 
         if unit_cost is None and quantity and amount is not None:
             unit_cost = amount / quantity
@@ -588,6 +812,7 @@ def parse_rows(entries: list[OcrEntry]) -> tuple[list[ProductRow], list[str]]:
 
         name = " ".join(part.strip() for part in name_parts if part.strip())
         name = re.sub(r"\s+", " ", name).strip()
+        name = normalize_ocr_name(name)
         if not name:
             name = code
 
@@ -694,6 +919,7 @@ def write_workbook(
     note.append(["平均信心", best["avg_score"]])
     note.append(["關鍵字命中", best["key_hits"]])
     note.append(["商品列數", len(rows)])
+    note.append(["偵測頁數", len(best.get("page_entries") or [best["entries"]])])
     note.append(["模型載入秒數", timings.get("model_load_seconds", "")])
     note.append(["OCR總秒數", timings.get("total_ocr_seconds", "")])
     note.append(["整體疑點", "；".join(global_issues) if global_issues else "無"])
@@ -755,44 +981,59 @@ def main() -> int:
     parser.add_argument("--multi-variant", action="store_true", help="手動開啟舊式多版本 OCR，命中足夠結果後早停。")
     parser.add_argument("--contrast", type=float, default=None, help="灰階對比增強倍率；未指定時讀取 OCR設定.json。")
     parser.add_argument("--sharpness", type=float, default=None, help="銳化倍率；未指定時讀取 OCR設定.json。")
+    parser.add_argument(
+        "--page-split",
+        choices=["auto", "off"],
+        default=None,
+        help="上下多頁照片自動分割；未指定時讀取 OCR設定.json，預設 auto。",
+    )
     args = parser.parse_args()
 
     image_path = args.image.expanduser().resolve()
     if not image_path.exists():
         raise SystemExit(f"找不到圖片：{image_path}")
 
-    settings = load_settings(args.settings.expanduser().resolve()) if args.settings else {}
-    rotation = args.rotation or str(settings.get("rotation", "auto"))
-    multi_variant = bool(args.multi_variant or settings.get("multi_variant", False))
-    contrast = float(args.contrast if args.contrast is not None else settings.get("contrast", 1.8))
-    sharpness = float(args.sharpness if args.sharpness is not None else settings.get("sharpness", 1.15))
+    lock_path = acquire_image_lock(image_path)
+    try:
+        settings = load_settings(args.settings.expanduser().resolve()) if args.settings else {}
+        rotation = args.rotation or str(settings.get("rotation", "auto"))
+        multi_variant = bool(args.multi_variant or settings.get("multi_variant", False))
+        contrast = float(args.contrast if args.contrast is not None else settings.get("contrast", 1.8))
+        sharpness = float(args.sharpness if args.sharpness is not None else settings.get("sharpness", 1.15))
+        page_split = args.page_split or str(settings.get("page_split", "auto"))
 
-    best, all_results, timings = run_ocr(
-        image_path,
-        args.tmp_dir / image_path.stem,
-        rotation,
-        multi_variant,
-        contrast,
-        sharpness,
-    )
-    vendor = infer_vendor(best["entries"])
-    rows, global_issues = parse_rows(best["entries"])
-    output_path = args.output.expanduser().resolve() if args.output else unique_output_path(args.output_dir, vendor)
-    write_workbook(image_path, output_path, vendor, best, all_results, rows, global_issues, timings)
+        best, all_results, timings = run_ocr(
+            image_path,
+            args.tmp_dir / image_path.stem,
+            rotation,
+            multi_variant,
+            contrast,
+            sharpness,
+            page_split,
+        )
+        vendor = infer_vendor(best["entries"])
+        rows, global_issues = parse_result_rows(best)
+        output_path = args.output.expanduser().resolve() if args.output else unique_output_path(args.output_dir, vendor)
+        write_workbook(image_path, output_path, vendor, best, all_results, rows, global_issues, timings)
 
-    summary = {
-        "ok": True,
-        "output": str(output_path),
-        "vendor": vendor,
-        "best_variant": best["variant"],
-        "row_count": len(rows),
-        "model_load_seconds": timings.get("model_load_seconds"),
-        "total_ocr_seconds": timings.get("total_ocr_seconds"),
-        "needs_review": bool(global_issues or any(row.issue != "無" or row.check != "通過" for row in rows)),
-        "issues": global_issues + [f"{row.vendor_code}: {row.issue}" for row in rows if row.issue != "無" or row.check != "通過"],
-    }
-    print(json.dumps(summary, ensure_ascii=False, indent=2))
-    return 0
+        summary = {
+            "ok": True,
+            "output": str(output_path),
+            "vendor": vendor,
+            "best_variant": best["variant"],
+            "row_count": len(rows),
+            "page_count": len(best.get("page_entries") or [best["entries"]]),
+            "model_load_seconds": timings.get("model_load_seconds"),
+            "total_ocr_seconds": timings.get("total_ocr_seconds"),
+            "needs_review": bool(global_issues or any(row.issue != "無" or row.check != "通過" for row in rows)),
+            "issues": global_issues + [
+                f"{row.vendor_code}: {row.issue}" for row in rows if row.issue != "無" or row.check != "通過"
+            ],
+        }
+        print(json.dumps(summary, ensure_ascii=False, indent=2))
+        return 0
+    finally:
+        release_image_lock(lock_path)
 
 
 if __name__ == "__main__":

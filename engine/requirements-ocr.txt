@@ -1,10 +1,9 @@
 paddlepaddle==3.3.1
 paddleocr==3.7.0
-paddlex==3.7.2
+paddlex==3.7.1
 openpyxl==3.1.5
-pillow==12.2.0
+pillow==12.1.0
 opencv-contrib-python==4.10.0.84
-pandas==3.0.3
 numpy==2.3.5
 PyYAML==6.0.2
-pyinstaller==6.21.0
+RapidFuzz==3.14.5

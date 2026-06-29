@@ -3,7 +3,9 @@ param(
     [string]$ProjectRoot,
 
     [Parameter(Mandatory = $true)]
-    [string]$PackageRoot
+    [string]$PackageRoot,
+
+    [switch]$SkipModelWarmup
 )
 
 $ErrorActionPreference = "Stop"
@@ -90,9 +92,21 @@ if (Test-Path -LiteralPath $modelZip) {
     Expand-Archive -LiteralPath $modelZip -DestinationPath $modelRoot -Force
 }
 
-& $venvPython -X utf8 -c "import paddle; import paddleocr; import openpyxl; from PIL import Image; print('OCR engine OK')"
+& $venvPython -X utf8 -m pip check
+if ($LASTEXITCODE -ne 0) {
+    throw "OCR environment dependency check failed."
+}
+
+& $venvPython -X utf8 -c "import cv2; import numpy; import openpyxl; import paddle; import paddleocr; import rapidfuzz; from PIL import Image; print('Local engines OK')"
 if ($LASTEXITCODE -ne 0) {
     throw "OCR engine validation failed."
+}
+
+if (-not $SkipModelWarmup) {
+    & $venvPython -X utf8 -c "from paddleocr import PaddleOCR; PaddleOCR(lang='ch', use_doc_orientation_classify=False, use_doc_unwarping=False, use_textline_orientation=False); print('OCR models ready')"
+    if ($LASTEXITCODE -ne 0) {
+        throw "OCR model download or initialization failed."
+    }
 }
 
 Write-Host "OCR engine installed: $venvPython"

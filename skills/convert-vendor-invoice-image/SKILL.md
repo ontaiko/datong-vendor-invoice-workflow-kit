@@ -29,6 +29,8 @@ description: Automatically detect and manage the user's vendor invoice image wor
 
 ## 專職技能分工
 
+進入 OCR 前先執行本技能 `scripts/check-product-csv-date.py`，確認工作區 `參考資料/產品資料輸出*.CSV` 的建立時間或修改時間至少一個是台北時區今天。未通過就停止，不啟動 OCR。
+
 依序交給下列專職技能處理：
 
 1. `$extract-vendor-invoice-image`：圖片擷取與原始進貨試算表。
@@ -36,19 +38,27 @@ description: Automatically detect and manage the user's vendor invoice image wor
 3. `$review-invoice-product-check`：正式品名、大類、產品代號覆核與 `[調整].xlsx`。
 4. `$build-inventory-import-files`：套用 `.xls` 範本，建立建檔用與採購單用檔案。
 
+## 本地引擎分工
+
+- OCR 圖片前處理與辨識由 `$extract-vendor-invoice-image` 使用本機 OpenCV/PaddleOCR。
+- 中間 `.xlsx` 檢查檔、人工校正檔、比對檢查檔與 `[調整].xlsx`，固定使用 Python/openpyxl 建立或修改；不要為中間 `.xlsx` 開啟 Excel COM。
+- 產品 CSV 讀取、產品相似比對與規則比對，固定使用 Python csv/RapidFuzz；不要用 Excel COM 讀 CSV 或做比對。
+- 只有最後需要產生舊版 `.xls` 建檔用或採購單用成品時，才交給 `$build-inventory-import-files` 使用 Excel COM 套用範本。
+
 ## 管理流程
 
-1. 確認輸入是進貨文件後，使用 `$extract-vendor-invoice-image` 依其規則先完成 OCR 前置圖片處理與圖片擷取，產生原始進貨明細試算表。
-2. 將擷取結果交給 `$match-product-catalog`，產生 `_產品比對檢查.xlsx`。
-3. 若 `$match-product-catalog` 判定全部商品不需要新品覆核，將比對檢查檔交給 `$build-inventory-import-files`，依該技能規則產生需要的正式檔。
-4. 若存在新品、相似產品、缺代號、缺大類或需要確認的商品，將比對檢查檔交給 `$review-invoice-product-check`。
-5. `$review-invoice-product-check` 停在待填代號確認清單時，把清單整理成可複製格式，等待使用者回覆產品代號、正式名稱與大類。
-6. 一番賞、抽賞或 `$review-invoice-product-check` 判定為一番賞候選的商品一律排除在本次建檔與採購項目外；品名被人工遮蔽或使用者表示遮蔽列是已確認重複品項時，也一律排除；不要要求使用者補代號，不要交給 `$build-inventory-import-files`，但最後回報要列出已排除項目。
-7. 使用者貼回代號、名稱或大類時，視為 `$review-invoice-product-check` 的輸入，依該技能規則繼續處理；若名稱或大類有修改，依覆核技能規則同步更新工作區 `參考資料/品牌括號命名規則.csv`。
-8. 若使用者要求拆分商品列，先保留原單總量與總金額，再依使用者指示拆分；若數量無法平均整除，先說明分配方式並取得確認。
-9. `[調整].xlsx` 產生後，依 `$build-inventory-import-files` 的規則，在建立正式 `.xls` 前確認使用者已同意進行正式輸出。若本次有排除項目，成本/金額核對只以保留項目的小計為準，不得使用含排除列的原單總額。若廠商為南波或南波丸，成本固定由建檔採購技能套用 `進價 × 1.05`。若廠商為萬榮或萬榮國際，採購單廠商代號固定使用 `38`。
-10. 正式檔產生後，固定用摘要格式回報建檔用檔案、採購單用檔案、商品筆數、新品筆數、已建檔筆數、廠商代號、是否含稅調整、排除項目與任何特殊處理。
-11. 正式成品檔案已產生且驗證存在後，刪除本次流程中間檔，只保留最後成品與必要參考資料。
+1. 確認輸入是進貨文件後，先執行 `scripts/check-product-csv-date.py --workspace-root <工作區>`。未通過日期檢查時停止，提醒使用者更新產品資料檔，不建立 OCR 或比對中間檔。
+2. 日期檢查通過後，使用 `$extract-vendor-invoice-image` 依其規則完成 OCR 前置圖片處理與圖片擷取，產生原始進貨明細試算表。
+3. 將擷取結果交給 `$match-product-catalog`，完整流程固定加上 `--no-suggestion-txt`，只產生 `_產品比對檢查.xlsx`；單獨呼叫比對技能時仍依該技能規則決定是否建立文字檔。
+4. 若 `$match-product-catalog` 判定全部商品不需要新品覆核，將比對檢查檔交給 `$build-inventory-import-files`，依該技能規則產生需要的正式檔。
+5. 若存在新品、相似產品、缺代號、缺大類或需要確認的商品，將比對檢查檔交給 `$review-invoice-product-check`。
+6. `$review-invoice-product-check` 停在待填代號確認清單時，把清單整理成可複製格式，等待使用者回覆產品代號、正式名稱與大類。
+7. 一番賞、抽賞或 `$review-invoice-product-check` 判定為一番賞候選的商品一律排除在本次建檔與採購項目外；品名被人工遮蔽或使用者表示遮蔽列是已確認重複品項時，也一律排除；不要要求使用者補代號，不要交給 `$build-inventory-import-files`，但最後回報要列出已排除項目。
+8. 使用者貼回代號、名稱或大類時，將回覆整理成 UTF-8 TSV 暫存檔，格式為 `產品代號<TAB>產品名稱<TAB>大類`；直接以原 `_產品比對檢查.xlsx` 搭配 `$review-invoice-product-check --answers-tsv ... --confirmed` 產生 `[調整].xlsx`，不要再建立 `_已套用.xlsx`。若名稱或大類有修改，依覆核技能規則同步更新工作區 `參考資料/品牌括號命名規則.csv`。
+9. 若使用者要求拆分商品列，先保留原單總量與總金額，再依使用者指示拆分；若數量無法平均整除，先說明分配方式並取得確認。
+10. `[調整].xlsx` 產生後，依 `$build-inventory-import-files` 的規則，在建立正式 `.xls` 前確認使用者已同意進行正式輸出。若本次有排除項目，成本/金額核對只以保留項目的小計為準，不得使用含排除列的原單總額。若廠商為南波或南波丸，成本固定由建檔採購技能套用 `進價 × 1.05`。若廠商為萬榮或萬榮國際，採購單廠商代號固定使用 `38`。
+11. 正式檔產生後，固定用摘要格式回報建檔用檔案、採購單用檔案、商品筆數、新品筆數、已建檔筆數、廠商代號、是否含稅調整、排除項目與任何特殊處理。
+12. 正式成品檔案已產生且驗證存在後，刪除本次流程中間檔，只保留最後成品與必要參考資料。
 
 ## 正式輸出後清理
 
@@ -56,7 +66,7 @@ description: Automatically detect and manage the user's vendor invoice image wor
 
 - 先確認最後成品檔案已存在且可開啟或至少通過基本檔案檢查；若成品產生失敗，不刪任何中間檔。
 - 保留最後成品：建檔用檔案、採購單用檔案；若本次只產生其中一種，就只保留該成品。
-- 預設刪除本次流程產生的中間檔：原始圖片轉試算表 `.xlsx`、`_產品比對檢查.xlsx`、`_產品比對檢查_建議名稱.txt`、`_已套用.xlsx`、`[調整].xlsx`、`_含稅成本.xlsx`、`_合併[調整]_含稅成本.xlsx`、OCR 覆核用 `_tmp_` 或 `OCR確認` 裁切圖。
+- 預設刪除本次流程產生的中間檔：原始圖片轉試算表 `.xlsx`、`_產品比對檢查.xlsx`、覆核回覆 TSV、舊流程遺留的 `_產品比對檢查_建議名稱.txt` 或 `_已套用.xlsx`、`[調整].xlsx`、`_含稅成本.xlsx`、`_合併[調整]_含稅成本.xlsx`、OCR 覆核用 `_tmp_` 或 `OCR確認` 裁切圖。
 - 刪除範圍只限本次流程產生的檔案與同一批檔名前綴；不要掃描整個資料夾做模糊刪除。
 - 不刪使用者原始圖片、不刪 `參考資料/` 內任何檔案、不刪 `品牌括號命名規則.csv`、不刪已存在的舊成品。
 - 清理完成後，在最後回報中簡短說明已刪除中間檔；若因成品驗證失敗而保留中間檔，也要說明原因。
@@ -66,6 +76,7 @@ description: Automatically detect and manage the user's vendor invoice image wor
 處理中維持以下狀態，必要時在對話中更新：
 
 - `圖片擷取`：是否已產生原始進貨試算表。
+- `參考預檢`：產品資料 CSV 是否為今天版本；未通過時不得開始 OCR。
 - `產品比對`：是否已產生 `_產品比對檢查.xlsx`，以及是否需要人工確認。
 - `覆核待補`：是否正在等待產品代號、正式名稱、大類或拆分方式。
 - `調整完成`：是否已產生 `[調整].xlsx`。

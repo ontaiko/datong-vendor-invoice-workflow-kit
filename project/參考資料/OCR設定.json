@@ -1,5 +1,6 @@
 {
   "rotation": "auto",
+  "page_split": "auto",
   "multi_variant": false,
   "contrast": 1.8,
   "sharpness": 1.15

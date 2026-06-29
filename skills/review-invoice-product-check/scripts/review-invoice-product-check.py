@@ -43,11 +43,13 @@ DROP_OUTPUT_COLUMNS = {"建檔代號", "已建檔代號", "已建檔品名", "�
 BRAND_RULES_FILENAME = "品牌括號命名規則.csv"
 CATEGORY_LIST_FILENAME = "大類清單.csv"
 SUMMARY_ROW_NAMES = {"總價格", "總價", "總計", "合計", "小計"}
-EXCLUDE_ITEM_KEYWORDS = (
+EXCLUDE_PRIZE_KEYWORDS = (
     "一番賞",
     "抽賞",
     "Ichiban Kuji",
     "ICHIBAN KUJI",
+)
+EXCLUDE_MARKER_KEYWORDS = (
     "遮蔽",
     "已遮蔽",
     "人工確認重複",
@@ -84,6 +86,92 @@ def read_csv_dicts(path: Path) -> list[dict[str, str]]:
         except UnicodeDecodeError as exc:
             last_error = exc
     die(f"無法讀取 CSV 編碼：{path} ({last_error})")
+
+
+def normalize_product_code(value: str) -> str:
+    text = str(value or "").strip()
+    formula_match = re.fullmatch(r'=\s*"(\d+)"', text)
+    if formula_match:
+        return formula_match.group(1)
+    return text
+
+
+def read_answers_tsv(path: Path) -> list[dict[str, str]]:
+    if not path.exists():
+        die(f"找不到覆核回覆 TSV：{path}")
+    answers: list[dict[str, str]] = []
+    with path.open("r", encoding="utf-8-sig", newline="") as f:
+        for line_number, fields in enumerate(csv.reader(f, delimiter="\t"), start=1):
+            fields = [field.strip() for field in fields]
+            if not fields or not any(fields) or fields[0] == "---":
+                continue
+            if len(fields) < 2 or not CODE_RE.match(fields[0]):
+                die(f"覆核回覆 TSV 第 {line_number} 行格式錯誤，必須是：產品代號<TAB>產品名稱<TAB>大類。")
+            category = ""
+            if len(fields) >= 3 and fields[2]:
+                match = re.match(r"^(\d+)", fields[2])
+                category = match.group(1) if match else fields[2]
+            answers.append({"code": fields[0], "name": fields[1], "category": category})
+    if not answers:
+        die(f"覆核回覆 TSV 沒有可套用資料：{path}")
+    return answers
+
+
+def catalog_by_code(rows: list[dict[str, str]]) -> dict[str, str]:
+    result: dict[str, str] = {}
+    for row in rows:
+        code = normalize_product_code(row.get("1.產品代號", ""))
+        name = str(row.get("2.產品名稱", "")).strip()
+        if CODE_RE.match(code) and name:
+            result.setdefault(code, name)
+    return result
+
+
+def apply_answers(
+    ws,
+    rows: list[int],
+    headers: dict[str, int],
+    answers: list[dict[str, str]],
+    products_by_code: dict[str, str],
+) -> None:
+    pending_rows = [row for row in rows if not is_existing_row(ws, row, headers)]
+    if len(answers) == len(rows):
+        target_rows = rows
+    elif len(answers) == len(pending_rows):
+        target_rows = pending_rows
+    else:
+        die(
+            f"覆核回覆筆數 {len(answers)} 與商品筆數 {len(rows)}、待確認筆數 {len(pending_rows)} 都不一致。"
+        )
+
+    code_col = headers["產品代號"]
+    name_col = headers["品名"]
+    category_col = headers["大類"]
+    status_col = headers.get("比對狀態")
+    matched_code_col = headers.get("已建檔代號")
+    matched_name_col = headers.get("已建檔品名")
+
+    for row, answer in zip(target_rows, answers):
+        code = answer["code"]
+        name = answer["name"]
+        category = answer["category"]
+        ws.cell(row, code_col).value = code
+        ws.cell(row, code_col).number_format = "@"
+        if name:
+            ws.cell(row, name_col).value = name
+        if category:
+            ws.cell(row, category_col).value = category
+            ws.cell(row, category_col).number_format = "@"
+
+        if status_col:
+            if code in products_by_code:
+                ws.cell(row, status_col).value = "已建檔"
+                if matched_code_col:
+                    ws.cell(row, matched_code_col).value = code
+                if matched_name_col:
+                    ws.cell(row, matched_name_col).value = products_by_code[code]
+            else:
+                ws.cell(row, status_col).value = "確認為新品"
 
 
 def split_rule_values(value: str) -> list[str]:
@@ -263,9 +351,9 @@ def item_rows(ws, header_row: int, headers: dict[str, int]) -> list[int]:
     return rows
 
 
-def row_text_for_exclusion(ws, row: int, headers: dict[str, int]) -> str:
+def row_text_for_headers(ws, row: int, headers: dict[str, int], header_names: tuple[str, ...]) -> str:
     texts: list[str] = []
-    for header in ("品名", "已建檔品名", "相似候選"):
+    for header in header_names:
         col = headers.get(header)
         if col:
             texts.append(str(ws.cell(row, col).value or ""))
@@ -273,8 +361,18 @@ def row_text_for_exclusion(ws, row: int, headers: dict[str, int]) -> str:
 
 
 def is_excluded_item_row(ws, row: int, headers: dict[str, int]) -> bool:
-    text = row_text_for_exclusion(ws, row, headers)
-    return any(keyword in text for keyword in EXCLUDE_ITEM_KEYWORDS)
+    # Do not use 相似候選 for prize exclusion. Candidate lists often contain
+    # unrelated 一番賞 matches and would incorrectly remove valid items.
+    name_text = row_text_for_headers(ws, row, headers, ("品名", "已建檔品名", "建議建檔名稱", "產品名稱"))
+    if any(keyword in name_text for keyword in EXCLUDE_PRIZE_KEYWORDS):
+        return True
+    marker_text = row_text_for_headers(
+        ws,
+        row,
+        headers,
+        ("品名", "已建檔品名", "建議建檔名稱", "產品名稱", "備註", "OCR疑點", "比對狀態"),
+    )
+    return any(keyword in marker_text for keyword in EXCLUDE_MARKER_KEYWORDS)
 
 
 def print_excluded_items(ws, rows: list[int], headers: dict[str, int]) -> None:
@@ -736,6 +834,7 @@ def main() -> None:
     parser.add_argument("--output-xlsx")
     parser.add_argument("--brand-rules")
     parser.add_argument("--category-rules")
+    parser.add_argument("--answers-tsv", help="使用者確認回覆，格式為產品代號<TAB>產品名稱<TAB>大類。")
     parser.add_argument("--check-only", action="store_true")
     parser.add_argument("--confirmed", action="store_true")
     args = parser.parse_args()
@@ -764,6 +863,9 @@ def main() -> None:
         return
 
     catalog_rows = read_catalog(csv_path)
+    products_by_code = catalog_by_code(catalog_rows)
+    if args.answers_tsv:
+        apply_answers(ws, rows, headers, read_answers_tsv(Path(args.answers_tsv)), products_by_code)
     catalog_names = catalog_product_names(catalog_rows)
     brand_rules_path = Path(args.brand_rules) if args.brand_rules else find_default_brand_rules(input_path, csv_path)
     brand_rule_rows = load_brand_rule_rows(brand_rules_path)

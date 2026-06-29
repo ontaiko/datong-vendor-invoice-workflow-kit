@@ -10,8 +10,15 @@ from pathlib import Path
 from zoneinfo import ZoneInfo
 
 from openpyxl import load_workbook
+from openpyxl.comments import Comment
 from openpyxl.styles import Alignment
+from openpyxl.styles import PatternFill
 from openpyxl.utils import get_column_letter
+
+try:
+    from rapidfuzz import fuzz
+except ImportError:
+    fuzz = None
 
 
 NON_IDENTITY_PARENS = re.compile(r"\((?:全?\d+種|再販|單)\)", re.IGNORECASE)
@@ -40,6 +47,8 @@ STATUS_LABELS = {
     "new": "確認為新品",
 }
 IDENTITY_TOKEN_CSV = "產品比對身份關鍵詞.csv"
+WARNING_FILL = PatternFill(fill_type="solid", fgColor="FFF2CC")
+PRODUCT_CODE_NAME_WARNING_THRESHOLD = 0.35
 
 
 def normalize_name(value):
@@ -89,7 +98,12 @@ def extract_character_tokens(value, character_tokens):
 
 
 def product_similarity(source_name, product_name, identity_tokens):
-    score = similarity(normalize_name(source_name), normalize_name(product_name))
+    source_normalized = normalize_name(source_name)
+    product_normalized = normalize_name(product_name)
+    if fuzz is not None:
+        score = fuzz.WRatio(source_normalized, product_normalized) / 100
+    else:
+        score = similarity(source_normalized, product_normalized)
     source_tokens = extract_identity_tokens(source_name, identity_tokens["version"])
     product_tokens = extract_identity_tokens(product_name, identity_tokens["version"])
     source_characters = extract_character_tokens(source_name, identity_tokens["character"])
@@ -246,6 +260,12 @@ def write_match_columns(ws, header_row, columns, row_numbers, matched):
             cell.value = value
             if header == "相似候選":
                 cell.alignment = Alignment(wrap_text=True, vertical="top")
+        if result.get("productCodeNameWarning"):
+            warning = result["productCodeNameWarning"]
+            for header in ("比對狀態", "已建檔品名"):
+                cell = ws.cell(row_index, columns[header])
+                cell.fill = copy(WARNING_FILL)
+                cell.comment = Comment(warning, "Codex")
     autofit_columns(ws)
 
 
@@ -314,16 +334,25 @@ def compare_item(item, products, products_by_code, identity_tokens, threshold, m
 
     if entered_product_code and entered_product_code in products_by_code:
         product = products_by_code[entered_product_code]
+        code_name_score = product_similarity(source_name, product["productName"], identity_tokens)
+        product_code_name_warning = ""
+        if code_name_score < PRODUCT_CODE_NAME_WARNING_THRESHOLD:
+            product_code_name_warning = (
+                "已填產品代號存在，但進貨品名與該代號正式品名差異過大；"
+                f"品名相似度 {code_name_score:.4f}，請覆核是否填錯代號。"
+            )
         result.update(
             {
                 "matchStatus": "exact",
                 "matchedProductCode": product["productCode"],
                 "matchedProductName": product["productName"],
-                "matchNote": "試算表已填產品代號，且今天產品資料 CSV 找到該代號。",
+                "matchNote": product_code_name_warning or "試算表已填產品代號，且今天產品資料 CSV 找到該代號。",
                 "existingProduct": True,
                 "productCode": product["productCode"],
                 "name": product["productName"],
                 "productCodeCheck": "found",
+                "productCodeNameScore": round(code_name_score, 4),
+                "productCodeNameWarning": product_code_name_warning,
             }
         )
         return result
@@ -376,8 +405,13 @@ def main():
     parser.add_argument("--input-xlsx", required=True, type=Path)
     parser.add_argument("--csv", required=True, type=Path)
     parser.add_argument("--output-xlsx", type=Path)
-    parser.add_argument("--similar-threshold", type=float, default=0.45)
+    parser.add_argument("--similar-threshold", type=float, default=0.6)
     parser.add_argument("--max-candidates", type=int, default=5)
+    parser.add_argument(
+        "--no-suggestion-txt",
+        action="store_true",
+        help="完整進貨流程使用：只輸出產品比對檢查 xlsx，不建立建議名稱 txt。",
+    )
     args = parser.parse_args()
 
     assert_current_reference_csv(args.csv)
@@ -403,11 +437,17 @@ def main():
     output_xlsx = args.output_xlsx or default_output_xlsx(args.input_xlsx)
     output_xlsx.parent.mkdir(parents=True, exist_ok=True)
     wb.save(output_xlsx)
-    suggested_path = write_suggested_names_txt(output_xlsx, items, matched)
-    if suggested_path:
-        print(f"已建立建議名稱檔：{suggested_path}")
+    if args.no_suggestion_txt:
+        stale_path = default_suggested_names_txt(output_xlsx)
+        if stale_path.exists():
+            stale_path.unlink()
+        print("完整流程模式：未建立建議名稱檔。")
     else:
-        print("全部商品皆已建檔，未建立建議名稱檔。")
+        suggested_path = write_suggested_names_txt(output_xlsx, items, matched)
+        if suggested_path:
+            print(f"已建立建議名稱檔：{suggested_path}")
+        else:
+            print("全部商品皆已建檔，未建立建議名稱檔。")
 
 
 if __name__ == "__main__":
