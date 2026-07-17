@@ -1,6 +1,6 @@
 {
   "name": "datong-vendor-invoice-workflow-kit",
-  "version": "2026.06.29",
+  "version": "2026.07.17",
   "platform": "windows",
   "skills": [
     "convert-vendor-invoice-image",
@@ -17,6 +17,14 @@
     "RapidFuzz",
     "Microsoft Excel COM for final legacy XLS output"
   ],
+  "offline_models": [
+    "PP-LCNet_x1_0_doc_ori",
+    "PP-LCNet_x1_0_textline_ori",
+    "PP-OCRv6_medium_det",
+    "PP-OCRv6_medium_rec",
+    "UVDoc"
+  ],
+  "model_manifest": "engine/model-manifest.json",
   "installer": "install.ps1",
   "verification": "scripts/verify-install.ps1",
   "project_memory": "memory-seed/datong-project-memory.md",

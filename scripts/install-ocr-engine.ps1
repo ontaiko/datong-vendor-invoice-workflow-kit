@@ -5,12 +5,64 @@ param(
     [Parameter(Mandatory = $true)]
     [string]$PackageRoot,
 
+    [string]$ModelRoot = "",
+
     [switch]$SkipModelWarmup
 )
 
 $ErrorActionPreference = "Stop"
 $env:PYTHONUTF8 = "1"
 $env:PADDLE_PDX_ENABLE_MKLDNN_BYDEFAULT = "0"
+
+if ([string]::IsNullOrWhiteSpace($ModelRoot)) {
+    $ModelRoot = Join-Path $env:USERPROFILE ".paddlex\official_models"
+}
+$ModelRoot = [System.IO.Path]::GetFullPath($ModelRoot)
+$env:PADDLE_PDX_CACHE_HOME = Split-Path -Parent $ModelRoot
+
+function Assert-ModelFiles {
+    param(
+        [Parameter(Mandatory = $true)][string]$Root,
+        [Parameter(Mandatory = $true)]$Manifest,
+        [Parameter(Mandatory = $true)][string]$Label
+    )
+
+    foreach ($file in $Manifest.files) {
+        $relative = ([string]$file.path).Replace("/", [System.IO.Path]::DirectorySeparatorChar)
+        $path = Join-Path $Root $relative
+        if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
+            throw "$Label model file is missing: $path"
+        }
+        $item = Get-Item -LiteralPath $path
+        if ($item.Length -ne [long]$file.bytes) {
+            throw "$Label model file size mismatch: $path"
+        }
+        $actualHash = (Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash.ToLowerInvariant()
+        if ($actualHash -ne ([string]$file.sha256).ToLowerInvariant()) {
+            throw "$Label model file hash mismatch: $path"
+        }
+    }
+}
+
+function Install-BundledModels {
+    $modelSourceRoot = Join-Path $PackageRoot "engine\official_models"
+    $manifestPath = Join-Path $PackageRoot "engine\model-manifest.json"
+    if (-not (Test-Path -LiteralPath $manifestPath -PathType Leaf)) {
+        throw "Offline model manifest is missing: $manifestPath"
+    }
+    $manifest = Get-Content -LiteralPath $manifestPath -Raw -Encoding UTF8 | ConvertFrom-Json
+    Assert-ModelFiles -Root $modelSourceRoot -Manifest $manifest -Label "Package"
+
+    foreach ($file in $manifest.files) {
+        $relative = ([string]$file.path).Replace("/", [System.IO.Path]::DirectorySeparatorChar)
+        $source = Join-Path $modelSourceRoot $relative
+        $destination = Join-Path $ModelRoot $relative
+        New-Item -ItemType Directory -Force -Path (Split-Path -Parent $destination) | Out-Null
+        Copy-Item -LiteralPath $source -Destination $destination -Force
+    }
+    Assert-ModelFiles -Root $ModelRoot -Manifest $manifest -Label "Installed"
+    return $manifest
+}
 
 function Get-Python312 {
     $candidates = @(
@@ -85,12 +137,7 @@ if ($LASTEXITCODE -ne 0) {
     throw "Failed to install OCR requirements."
 }
 
-$modelZip = Join-Path $PackageRoot "engine\official_models.zip"
-if (Test-Path -LiteralPath $modelZip) {
-    $modelRoot = Join-Path $env:USERPROFILE ".paddlex\official_models"
-    New-Item -ItemType Directory -Force -Path $modelRoot | Out-Null
-    Expand-Archive -LiteralPath $modelZip -DestinationPath $modelRoot -Force
-}
+$modelManifest = Install-BundledModels
 
 & $venvPython -X utf8 -m pip check
 if ($LASTEXITCODE -ne 0) {
@@ -103,10 +150,12 @@ if ($LASTEXITCODE -ne 0) {
 }
 
 if (-not $SkipModelWarmup) {
-    & $venvPython -X utf8 -c "from paddleocr import PaddleOCR; PaddleOCR(lang='ch', use_doc_orientation_classify=False, use_doc_unwarping=False, use_textline_orientation=False); print('OCR models ready')"
+    $modelNames = ($modelManifest.models | ConvertTo-Json -Compress)
+    & $venvPython -X utf8 -c "import json; from paddlex import create_model; names=json.loads(r'''$modelNames'''); [create_model(model_name=name) for name in names]; from paddleocr import PaddleOCR; PaddleOCR(lang='ch', use_doc_orientation_classify=False, use_doc_unwarping=False, use_textline_orientation=False); print('Offline OCR models ready:', ', '.join(names))"
     if ($LASTEXITCODE -ne 0) {
-        throw "OCR model download or initialization failed."
+        throw "Offline OCR model initialization failed."
     }
 }
 
 Write-Host "OCR engine installed: $venvPython"
+Write-Host "Offline OCR models installed: $ModelRoot"

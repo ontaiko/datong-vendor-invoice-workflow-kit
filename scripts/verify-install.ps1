@@ -5,6 +5,10 @@ param(
     [Parameter(Mandatory = $true)]
     [string]$CodexHome,
 
+    [string]$PackageRoot = "",
+
+    [string]$ModelRoot = "",
+
     [switch]$SkipEngine,
     [switch]$SkipExcelCheck
 )
@@ -12,6 +16,16 @@ param(
 $ErrorActionPreference = "Stop"
 $env:PYTHONUTF8 = "1"
 $env:PADDLE_PDX_ENABLE_MKLDNN_BYDEFAULT = "0"
+
+if ([string]::IsNullOrWhiteSpace($PackageRoot)) {
+    $PackageRoot = Split-Path -Parent (Split-Path -Parent $MyInvocation.MyCommand.Path)
+}
+if ([string]::IsNullOrWhiteSpace($ModelRoot)) {
+    $ModelRoot = Join-Path $env:USERPROFILE ".paddlex\official_models"
+}
+$PackageRoot = [System.IO.Path]::GetFullPath($PackageRoot)
+$ModelRoot = [System.IO.Path]::GetFullPath($ModelRoot)
+$env:PADDLE_PDX_CACHE_HOME = Split-Path -Parent $ModelRoot
 
 function Decode-Name {
     param([Parameter(Mandatory = $true)][string]$Base64)
@@ -70,6 +84,24 @@ if (-not $SkipEngine) {
     if ($LASTEXITCODE -ne 0) {
         throw "Python dependency validation failed."
     }
+
+    $manifestPath = Join-Path $PackageRoot "engine\model-manifest.json"
+    if (-not (Test-Path -LiteralPath $manifestPath -PathType Leaf)) {
+        throw "Offline model manifest is missing: $manifestPath"
+    }
+    $manifest = Get-Content -LiteralPath $manifestPath -Raw -Encoding UTF8 | ConvertFrom-Json
+    foreach ($file in $manifest.files) {
+        $relative = ([string]$file.path).Replace("/", [System.IO.Path]::DirectorySeparatorChar)
+        $path = Join-Path $ModelRoot $relative
+        if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
+            throw "Installed model file is missing: $path"
+        }
+        $item = Get-Item -LiteralPath $path
+        $actualHash = (Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash.ToLowerInvariant()
+        if ($item.Length -ne [long]$file.bytes -or $actualHash -ne ([string]$file.sha256).ToLowerInvariant()) {
+            throw "Installed model file validation failed: $path"
+        }
+    }
 }
 
 if (-not $SkipExcelCheck) {
@@ -91,4 +123,7 @@ if (-not $SkipExcelCheck) {
 Write-Host "Five workflow skills: OK"
 Write-Host "Project references: OK"
 Write-Host "Portable project memory: OK"
+if (-not $SkipEngine) {
+    Write-Host "Five offline OCR models: OK"
+}
 Write-Host "Installation verification complete."

@@ -1,0 +1,103 @@
+{
+  "format_version": 1,
+  "model_root": "engine/official_models",
+  "models": [
+    "PP-LCNet_x1_0_doc_ori",
+    "PP-LCNet_x1_0_textline_ori",
+    "PP-OCRv6_medium_det",
+    "PP-OCRv6_medium_rec",
+    "UVDoc"
+  ],
+  "files": [
+    {
+      "path": "PP-LCNet_x1_0_doc_ori/config.json",
+      "bytes": 2561,
+      "sha256": "e49f6be2fe4034232b05fb80d983a7b9bde4592d4a52812129c9a348057d3147"
+    },
+    {
+      "path": "PP-LCNet_x1_0_doc_ori/inference.json",
+      "bytes": 104441,
+      "sha256": "3580978602f309c3554508dd85d4fe09b73a7e0d80d7f9e63258f5b72c390c69"
+    },
+    {
+      "path": "PP-LCNet_x1_0_doc_ori/inference.pdiparams",
+      "bytes": 6754166,
+      "sha256": "e8d6e7c5d264507e40e58a655779059d616b20d7441ea22047d829eb3931989c"
+    },
+    {
+      "path": "PP-LCNet_x1_0_doc_ori/inference.yml",
+      "bytes": 766,
+      "sha256": "9e195eb729a8173588cd0e8a852c8b373aa606e79e77b4ac7d8346f5426caf26"
+    },
+    {
+      "path": "PP-LCNet_x1_0_textline_ori/config.json",
+      "bytes": 2487,
+      "sha256": "c1a2576f9713adabdc4a58d9d654fcc9ea93b6efd0e2d3581d5aab409a33f14f"
+    },
+    {
+      "path": "PP-LCNet_x1_0_textline_ori/inference.json",
+      "bytes": 104399,
+      "sha256": "b81929eeaff8e52db0fafb49c9fbfc5bc0572f81641fe0179cc52096323fb4d4"
+    },
+    {
+      "path": "PP-LCNet_x1_0_textline_ori/inference.pdiparams",
+      "bytes": 6743918,
+      "sha256": "0de2bcf996cf553e2b848dd7b1769dafffc6917b1ccdf55c1d8efe7909fbf743"
+    },
+    {
+      "path": "PP-LCNet_x1_0_textline_ori/inference.yml",
+      "bytes": 735,
+      "sha256": "8d5120d0e1a30a9df7ed46aa9119da3796ed066777089d1c1d705f132d5e90f9"
+    },
+    {
+      "path": "PP-OCRv6_medium_det/inference.json",
+      "bytes": 312150,
+      "sha256": "0f1a7ec35da36173529c7a60238b7f7919e3831929c3f700ad90ad4896adecd5"
+    },
+    {
+      "path": "PP-OCRv6_medium_det/inference.pdiparams",
+      "bytes": 61960476,
+      "sha256": "85218d2e3d98f5a21c58b4220627be923a97aee5db3cc71f39536ab31ac53960"
+    },
+    {
+      "path": "PP-OCRv6_medium_det/inference.yml",
+      "bytes": 886,
+      "sha256": "7298d5ead546584af2504d03355f881ac7a7bc0eb1e282d3e159277c1d0af871"
+    },
+    {
+      "path": "PP-OCRv6_medium_rec/inference.json",
+      "bytes": 221814,
+      "sha256": "0b2e25e990bd072f1bf77d59d67d508bce6c4bd44af6624e0fb27d6da2cd00e8"
+    },
+    {
+      "path": "PP-OCRv6_medium_rec/inference.pdiparams",
+      "bytes": 76465087,
+      "sha256": "1b01c79a914587933f615569e75de54f2e638ebb5d3f3b3c1b38c24ede8c7319"
+    },
+    {
+      "path": "PP-OCRv6_medium_rec/inference.yml",
+      "bytes": 150580,
+      "sha256": "991b700facf5b50a7de193468207d5f4255b538dde0d312ae3b7c7a9b6873129"
+    },
+    {
+      "path": "UVDoc/config.json",
+      "bytes": 1489,
+      "sha256": "0ffdb1f399eee3eb7816fb79b1380f97f89039b955eee2e60d3f7336f6f30875"
+    },
+    {
+      "path": "UVDoc/inference.json",
+      "bytes": 190986,
+      "sha256": "2c2bc3e0f15e782cf8f2ad411b5033d99ca504fe88648f8054a5e925ba2336e0"
+    },
+    {
+      "path": "UVDoc/inference.pdiparams",
+      "bytes": 32054311,
+      "sha256": "810488899520e0da843b9bd9769ba4949f1c81e357f0eceb12d4a7da459c3eca"
+    },
+    {
+      "path": "UVDoc/inference.yml",
+      "bytes": 330,
+      "sha256": "be83d537b358f3ff87740e77e14a83ee9e9a7bb215c33d091b69e8bd5904fe39"
+    }
+  ]
+}
