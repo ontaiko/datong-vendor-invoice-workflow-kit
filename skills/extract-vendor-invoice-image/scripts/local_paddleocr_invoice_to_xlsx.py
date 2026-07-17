@@ -49,6 +49,7 @@ KEY_TERMS = [
     "萬榮",
     "南波",
     "鉅霖",
+    "元大",
     "BRICKROID",
     "BAP",
     "GSC",
@@ -57,6 +58,7 @@ KEY_TERMS = [
 PRODUCT_CODE_RE = re.compile(
     r"^\s*(?:\d+\s*)?((?:[A-Z]{2,8}-[A-Z0-9]+)|(?:[A-Z]{2,8}\d{4,})|(?:\d{6}))\s*(.*)$"
 )
+YUANDA_ITEM_RE = re.compile(r"^\s*(?:\d+\s+)?(\d{9})(.*)$")
 NUMBER_RE = re.compile(r"-?\d+(?:,\d{3})*(?:\.\d+)?")
 MONEY_DECIMAL_RE = re.compile(r"\d,\d{3}\.\d+|\d{2,4}\.\d+")
 MONEY_INTEGER_RE = re.compile(r"-?(?:\d{1,3}(?:,\d{3})+|\d{1,6})")
@@ -200,6 +202,8 @@ def vendor_short(name: str) -> str:
         return "麗嬰"
     if "鉅霖" in name:
         return "鉅霖"
+    if "元大玩具" in name or "元大" in name:
+        return "元大玩具"
     cleaned = re.sub(r"[^\w\u4e00-\u9fff]+", "", name)
     return cleaned[:4] or "進貨"
 
@@ -455,7 +459,15 @@ def is_good_enough_result(result: dict[str, Any]) -> bool:
 
 
 def is_bad_auto_rotation_result(result: dict[str, Any]) -> bool:
-    return result["key_hits"] == 0 or result["product_code_hits"] < GOOD_ENOUGH_PRODUCT_CODE_HITS
+    if result["key_hits"] == 0:
+        return True
+    try:
+        rows, _issues = parse_result_rows(result)
+        if any(row.check == "通過" for row in rows):
+            return False
+    except Exception:
+        pass
+    return result["product_code_hits"] < GOOD_ENOUGH_PRODUCT_CODE_HITS
 
 
 def score_ocr_result(result: dict[str, Any]) -> tuple[int, int, int, int, int, float]:
@@ -479,11 +491,68 @@ def parse_result_rows(result: dict[str, Any]) -> tuple[list[ProductRow], list[st
     rows: list[ProductRow] = []
     issues: list[str] = []
     for page_index, entries in enumerate(page_entries, start=1):
-        page_rows, page_issues = parse_rows(entries)
+        if any("元大玩具" in entry.text for entry in entries[:20]):
+            page_rows, page_issues = parse_yuanda_rows(entries)
+        else:
+            page_rows, page_issues = parse_rows(entries)
         rows.extend(page_rows)
         issues.extend(f"第{page_index}頁：{issue}" for issue in page_issues)
     return rows, issues
 
+
+def estimate_product_anchor_count(result: dict[str, Any]) -> int:
+    page_entries = result.get("page_entries") or [result["entries"]]
+    return sum(len(product_anchor_codes(entries)) for entries in page_entries)
+
+
+def product_anchor_codes(entries: list[OcrEntry]) -> list[str]:
+    if not entries:
+        return []
+    if any("元大玩具" in entry.text for entry in entries[:20]):
+        width = max((entry.box[2] for entry in entries), default=1700)
+        anchors = [
+            match.group(1)
+            for entry in entries
+            if (match := YUANDA_ITEM_RE.match(entry.text)) and entry.x < width * 0.35
+        ]
+        return dedupe_nearby_anchor_codes(anchors)
+
+    _header_y, positions = header_positions(entries)
+    code_left = positions["code"] - 140
+    code_right = positions["name"] + 30
+    anchors: list[str] = []
+    for entry in sorted(entries, key=lambda item: (item.y, item.x)):
+        match = PRODUCT_CODE_RE.match(entry.text)
+        if not match:
+            continue
+        if not (code_left <= entry.x <= code_right):
+            continue
+        code = match.group(1)
+        if code.upper().startswith(("PH", "PK")) and "-" not in code:
+            continue
+        anchors.append(code)
+    return dedupe_nearby_anchor_codes(anchors)
+
+
+def dedupe_nearby_anchor_codes(codes: list[str]) -> list[str]:
+    deduped: list[str] = []
+    for code in codes:
+        normalized = code.strip().upper()
+        if not normalized:
+            continue
+        if deduped and deduped[-1] == normalized:
+            continue
+        deduped.append(normalized)
+    return deduped
+
+
+def row_count_audit_issues(result: dict[str, Any], rows: list[ProductRow]) -> list[str]:
+    expected = estimate_product_anchor_count(result)
+    if expected > len(rows):
+        return [
+            f"OCR 原始文字疑似有 {expected} 個商品列錨點，但輸出明細只有 {len(rows)} 筆，可能漏列；請查看 OCR測試紀錄原始文字。"
+        ]
+    return []
 
 def merge_page_entries(page_entries: list[list[OcrEntry]]) -> list[OcrEntry]:
     merged: list[OcrEntry] = []
@@ -629,7 +698,13 @@ def load_settings(path: Path) -> dict[str, Any]:
 
 def infer_vendor(entries: list[OcrEntry]) -> str:
     for entry in entries[:20]:
-        if "南波" in entry.text or "萬榮" in entry.text or "麗嬰" in entry.text or "鉅霖" in entry.text:
+        if (
+            "南波" in entry.text
+            or "萬榮" in entry.text
+            or "麗嬰" in entry.text
+            or "鉅霖" in entry.text
+            or "元大玩具" in entry.text
+        ):
             return entry.text
     for entry in entries[:20]:
         if "公司" in entry.text or "商行" in entry.text:
@@ -696,6 +771,145 @@ def header_positions(entries: list[OcrEntry]) -> tuple[float, dict[str, float]]:
 
 def nearest_column(entry: OcrEntry, positions: dict[str, float]) -> str:
     return min(positions, key=lambda key: abs(entry.x - positions[key]))
+
+
+def parse_yuanda_rows(entries: list[OcrEntry]) -> tuple[list[ProductRow], list[str]]:
+    width = max((entry.box[2] for entry in entries), default=1700)
+    anchors: list[tuple[OcrEntry, str]] = []
+    for entry in entries:
+        match = YUANDA_ITEM_RE.match(entry.text)
+        if match and entry.x < width * 0.35:
+            anchors.append((entry, match.group(1)))
+    anchors.sort(key=lambda item: item[0].y)
+    if not anchors:
+        return [], ["元大單據未辨識到 9 位品號商品列。"]
+
+    first_y = anchors[0][0].y
+
+    def header_x(terms: tuple[str, ...], default_ratio: float) -> float:
+        matches = [
+            entry.x
+            for entry in entries
+            if entry.y < first_y and any(term in entry.text for term in terms)
+        ]
+        return median(matches) if matches else width * default_ratio
+
+    quantity_x = header_x(("數量", "数量"), 0.69)
+    unit_cost_x = header_x(("單價",), 0.78)
+    amount_x = header_x(("原幣金額", "金額", "金额"), 0.90)
+    unit_amount_boundary = (unit_cost_x + amount_x) / 2
+    stop_entries = [
+        entry
+        for entry in entries
+        if any(term in entry.text for term in ("以下空白", "原幣未稅", "原幣合計", "本幣合計"))
+    ]
+
+    rows: list[ProductRow] = []
+    global_issues: list[str] = []
+    for index, (anchor, code) in enumerate(anchors):
+        next_anchor_y = anchors[index + 1][0].y if index + 1 < len(anchors) else float("inf")
+        next_anchor_top = anchors[index + 1][0].box[1] if index + 1 < len(anchors) else float("inf")
+        next_stop_y = min((entry.y for entry in stop_entries if entry.y > anchor.y), default=float("inf"))
+        row_end_y = min(next_anchor_y, next_stop_y, anchor.y + 130)
+        row_entries = [entry for entry in entries if anchor.box[1] - 12 <= entry.y < row_end_y]
+
+        name_parts: list[str] = []
+        for entry in sorted(row_entries, key=lambda item: (item.y, item.x)):
+            # Wrapped names belong to the item whose printed row starts above them.
+            # Use box tops here instead of center-y tolerance so the previous row's
+            # continuation is not repeated in the next product.
+            if not (anchor.box[1] - 3 <= entry.box[1] < next_anchor_top):
+                continue
+            if not (width * 0.28 <= entry.x <= width * 0.54):
+                continue
+            text = entry.text.strip()
+            if entry.box[2] > width * 0.46:
+                text = re.sub(r"(?<=[\u4e00-\u9fff])\d{1,4}$", "", text)
+            if not text or re.fullmatch(r"[\d\s,.\-]+", text):
+                continue
+            if YUANDA_ITEM_RE.match(text) or PRODUCT_CODE_RE.match(text):
+                continue
+            if any(term in text for term in ("品名", "規格", "以下空白", "台幣", "外幣")):
+                continue
+            name_parts.append(text)
+
+        def nearest_value(target_x: float, max_distance: float, parser: Any) -> float | None:
+            candidates: list[tuple[float, float, float]] = []
+            for entry in row_entries:
+                if abs(entry.x - target_x) > max_distance:
+                    continue
+                value = parser(entry.text)
+                if value is not None:
+                    candidates.append((abs(entry.x - target_x), abs(entry.y - anchor.y), float(value)))
+            # Adjacent rows can share nearly identical x coordinates. Prefer the
+            # value nearest this row vertically, then use x distance as a tie-break.
+            return min(candidates, key=lambda item: (item[1], item[0]))[2] if candidates else None
+
+        quantity_value = nearest_value(quantity_x, max(90, width * 0.06), extract_quantity)
+        unit_cost = nearest_value(unit_cost_x, max(100, width * 0.07), extract_decimal_money)
+        if unit_cost is None:
+            unit_cost = nearest_value(unit_cost_x, max(100, width * 0.07), clean_number)
+        amount = nearest_value(amount_x, max(130, width * 0.09), extract_integer_money)
+
+        inner_values: list[int] = []
+        bag_values: list[int] = []
+        for entry in row_entries:
+            text = entry.text.strip()
+            if width * 0.46 <= entry.x <= width * 0.56 and re.fullmatch(r"\d{1,3}", text):
+                value = int(text)
+                if 0 < value <= 100:
+                    inner_values.append(value)
+            if width * 0.55 <= entry.x <= width * 0.66 and re.fullmatch(r"0\d+", text):
+                value = int(text[1:])
+                if value > 0:
+                    bag_values.append(value)
+        inner_count = inner_values[-1] if inner_values else None
+        bag_count = bag_values[-1] if bag_values else None
+        calculated_quantity = inner_count * bag_count if inner_count and bag_count else None
+        quantity = int(quantity_value) if quantity_value is not None else calculated_quantity
+
+        issue_parts: list[str] = []
+        name = normalize_ocr_name(" ".join(name_parts))
+        name = name.replace("貓咪頭市貓公", "貓咪頭巾貓公")
+        name = name.replace("公存", "公仔").replace("倚局", "倚肩")
+        name = re.sub(r"(?<=[\u4e00-\u9fff])\s+(?=P\d)", "", name)
+        issue_parts.extend(suspicious_name_issues(name))
+        if not name:
+            name = code
+            issue_parts.append("品名未穩定辨識")
+        if quantity is None:
+            issue_parts.append("數量未穩定辨識")
+        elif calculated_quantity is not None and quantity != calculated_quantity:
+            issue_parts.append(
+                f"元大內裝數×袋數={calculated_quantity}，與數量 {quantity} 不符"
+            )
+        if unit_cost is None:
+            issue_parts.append("進價未穩定辨識")
+        if amount is None:
+            issue_parts.append("金額未穩定辨識")
+
+        check = "需確認"
+        if quantity is not None and unit_cost is not None and amount is not None:
+            diff = abs(quantity * unit_cost - amount)
+            tolerance = max(1, abs(amount) * 0.01)
+            if diff <= tolerance:
+                check = "通過"
+            else:
+                check = "不符"
+                issue_parts.append(f"數量×進價={quantity * unit_cost:.3f}，與金額 {amount:.3f} 不符")
+
+        rows.append(
+            ProductRow(
+                vendor_code=code,
+                name=name,
+                quantity=quantity,
+                unit_cost=compact_amount(unit_cost),
+                amount=compact_amount(amount),
+                check=check,
+                issue="；".join(issue_parts) if issue_parts else "無",
+            )
+        )
+    return rows, global_issues
 
 
 def parse_rows(entries: list[OcrEntry]) -> tuple[list[ProductRow], list[str]]:
@@ -853,8 +1067,13 @@ def parse_rows(entries: list[OcrEntry]) -> tuple[list[ProductRow], list[str]]:
 
 
 def infer_total(entries: list[OcrEntry], rows: list[ProductRow]) -> float | None:
+    for entry in entries:
+        if "原幣合計" in entry.text:
+            number = clean_number(entry.text)
+            if number is not None and number > 0:
+                return number
     for i, entry in enumerate(entries):
-        if "總計" in entry.text or "总计" in entry.text:
+        if ("總計" in entry.text or "总计" in entry.text) and "數量總計" not in entry.text:
             nearby = entries[i : i + 5]
             for candidate in nearby:
                 number = clean_number(candidate.text)
@@ -919,6 +1138,7 @@ def write_workbook(
     note.append(["平均信心", best["avg_score"]])
     note.append(["關鍵字命中", best["key_hits"]])
     note.append(["商品列數", len(rows)])
+    note.append(["疑似商品列錨點", estimate_product_anchor_count(best)])
     note.append(["偵測頁數", len(best.get("page_entries") or [best["entries"]])])
     note.append(["模型載入秒數", timings.get("model_load_seconds", "")])
     note.append(["OCR總秒數", timings.get("total_ocr_seconds", "")])
@@ -1013,6 +1233,7 @@ def main() -> int:
         )
         vendor = infer_vendor(best["entries"])
         rows, global_issues = parse_result_rows(best)
+        global_issues.extend(row_count_audit_issues(best, rows))
         output_path = args.output.expanduser().resolve() if args.output else unique_output_path(args.output_dir, vendor)
         write_workbook(image_path, output_path, vendor, best, all_results, rows, global_issues, timings)
 
@@ -1022,6 +1243,7 @@ def main() -> int:
             "vendor": vendor,
             "best_variant": best["variant"],
             "row_count": len(rows),
+            "estimated_row_count": estimate_product_anchor_count(best),
             "page_count": len(best.get("page_entries") or [best["entries"]]),
             "model_load_seconds": timings.get("model_load_seconds"),
             "total_ocr_seconds": timings.get("total_ocr_seconds"),

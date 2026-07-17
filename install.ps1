@@ -1,6 +1,7 @@
 param(
     [string]$ProjectRoot = "",
     [string]$CodexHome = "",
+    [string]$ModelRoot = "",
     [switch]$SkipEngine,
     [switch]$SkipModelWarmup,
     [switch]$SkipExcelCheck,
@@ -26,9 +27,13 @@ if ([string]::IsNullOrWhiteSpace($ProjectRoot)) {
 if ([string]::IsNullOrWhiteSpace($CodexHome)) {
     $CodexHome = Join-Path $env:USERPROFILE ".codex"
 }
+if ([string]::IsNullOrWhiteSpace($ModelRoot)) {
+    $ModelRoot = Join-Path $env:USERPROFILE ".paddlex\official_models"
+}
 
 $ProjectRoot = [System.IO.Path]::GetFullPath($ProjectRoot)
 $CodexHome = [System.IO.Path]::GetFullPath($CodexHome)
+$ModelRoot = [System.IO.Path]::GetFullPath($ModelRoot)
 $skillsTarget = Join-Path $CodexHome "skills"
 $skillNames = @(
     "convert-vendor-invoice-image",
@@ -139,12 +144,15 @@ if (-not $SkipEngine) {
     & (Join-Path $packageRoot "scripts\install-ocr-engine.ps1") `
         -ProjectRoot $ProjectRoot `
         -PackageRoot $packageRoot `
+        -ModelRoot $ModelRoot `
         -SkipModelWarmup:$SkipModelWarmup
 }
 
 & (Join-Path $packageRoot "scripts\verify-install.ps1") `
     -ProjectRoot $ProjectRoot `
     -CodexHome $CodexHome `
+    -PackageRoot $packageRoot `
+    -ModelRoot $ModelRoot `
     -SkipEngine:$SkipEngine `
     -SkipExcelCheck:$SkipExcelCheck
 
@@ -153,6 +161,9 @@ Write-Host "Install complete."
 Write-Host "Project: $ProjectRoot"
 Write-Host "Codex skills: $skillsTarget"
 Write-Host "Project memory: $memoryTarget"
+if (-not $SkipEngine) {
+    Write-Host "Offline OCR models: $ModelRoot"
+}
 if (Test-Path -LiteralPath $backupRoot) {
     Write-Host "Previous files backup: $backupRoot"
 }

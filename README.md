@@ -6,7 +6,7 @@
 - 大統工作助手專案規則
 - 商品與廠商參考資料
 - 整個大統工作助手的可攜式專案記憶
-- OCR 設定與本機引擎自動安裝／驗證腳本
+- OCR 設定、本機引擎自動安裝／驗證腳本，以及 5 組可離線使用的 OCR 模型
 
 本工作包完全依賴 Codex 執行流程，不包含額外桌面程式。
 
@@ -105,11 +105,19 @@ powershell -NoProfile -ExecutionPolicy Bypass -File ".\install.ps1"
 - RapidFuzz：本機產品相似比對
 - Pillow／NumPy：圖片與陣列處理
 
-安裝時會預先初始化中文 OCR 模型，因此第一次安裝需要網路，時間也會比一般 skill 安裝久。
+倉庫已包含目前流程使用的 5 組 PaddleX 模型：
+
+- `PP-OCRv6_medium_det`
+- `PP-OCRv6_medium_rec`
+- `PP-LCNet_x1_0_doc_ori`
+- `PP-LCNet_x1_0_textline_ori`
+- `UVDoc`
+
+安裝程式會將模型複製到 `%USERPROFILE%\.paddlex\official_models`，依 `engine\model-manifest.json` 逐檔核對大小與 SHA256，再實際載入模型。模型不需要在第一次 OCR 時另外下載；Python 與套件安裝仍需要網路。
+
+模型由 PaddlePaddle 發布並依 Apache License 2.0 提供，來源與授權資訊放在 `engine\official_models\NOTICE.md`。
 
 正式輸出舊版 `.xls` 還需要桌面版 Microsoft Excel。Excel 屬於授權軟體，不會由這個 repo 自動安裝；安裝驗證會檢查 Excel COM，未安裝時會清楚警告，但 OCR、比對與中間 `.xlsx` 仍可使用。
-
-如果 repo release 內另外提供 `official_models.zip`，可放到 `engine\official_models.zip` 後重跑 `install.ps1`，腳本會解壓到 `%USERPROFILE%\.paddlex\official_models`。
 
 ## 安裝驗證
 
@@ -119,5 +127,10 @@ powershell -NoProfile -ExecutionPolicy Bypass -File ".\install.ps1"
 - 專案規則、OCR 設定、產品資料、廠商資料與 `.xls` 範本是否齊全
 - `PROJECT_MEMORY.md` 是否已安裝
 - PaddleOCR、OpenCV、openpyxl、RapidFuzz 等 Python 套件能否匯入
+- 5 組離線模型的檔案大小、SHA256 與模型初始化是否通過
 - Python 環境是否有相依衝突
 - Excel COM 是否可用
+
+## 自動判斷與優化檢查
+
+安裝後，Agent 會依專案 `AGENTS.md` 與 `convert-vendor-invoice-image` 自動判斷上傳圖片是否為進貨單、銷貨憑單或送貨單。每次技能或流程執行，都會在停止節點與完成時檢查是否有可改善之處；即使沒有改善項目，也會明確回報檢查結果。
