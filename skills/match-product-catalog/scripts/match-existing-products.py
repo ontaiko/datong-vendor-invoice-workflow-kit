@@ -27,6 +27,7 @@ IGNORED_CHARS = re.compile(r"[\s\-_/\\・:：,，.。+＋]+")
 EXCEL_TEXT_CODE = re.compile(r'^="([^"]*)"$')
 SUMMARY_ROW_NAMES = {"總價格", "總價", "總計", "合計", "小計", "稅金", "稅額", "折扣", "總數量", "合計數量", "頁碼", "頁次"}
 SUMMARY_ROW_PREFIXES = tuple(SUMMARY_ROW_NAMES)
+CJK_ONLY = re.compile(r"[^\u4e00-\u9fff]+")
 
 
 def is_summary_text(value):
@@ -59,11 +60,17 @@ def normalize_name(value):
 
 
 def normalize_product_code(value):
-    text = str(value or "").strip()
+    if isinstance(value, float) and value.is_integer():
+        text = str(int(value))
+    else:
+        text = str(value or "").strip()
     match = EXCEL_TEXT_CODE.match(text)
     if match:
         text = match.group(1)
-    return text.strip()
+    text = text.strip()
+    if re.fullmatch(r"\d{1,6}", text):
+        return text.zfill(6)
+    return text
 
 
 def bigrams(text):
@@ -95,6 +102,43 @@ def extract_identity_tokens(value, version_tokens):
 def extract_character_tokens(value, character_tokens):
     text = unicodedata.normalize("NFKC", str(value or ""))
     return {token for token in character_tokens if token in text}
+
+
+def cjk_identity_text(value):
+    text = LEADING_CATEGORY.sub("", unicodedata.normalize("NFKC", str(value or "")))
+    text = NON_IDENTITY_PARENS.sub("", text)
+    return CJK_ONLY.sub("", text)
+
+
+def longest_common_substring_length(left, right):
+    if not left or not right:
+        return 0
+    previous = [0] * (len(right) + 1)
+    best = 0
+    for left_char in left:
+        current = [0] * (len(right) + 1)
+        for index, right_char in enumerate(right, start=1):
+            if left_char == right_char:
+                current[index] = previous[index - 1] + 1
+                best = max(best, current[index])
+        previous = current
+    return best
+
+
+def has_meaningful_overlap(source_name, product_name, identity_tokens):
+    source_cjk = cjk_identity_text(source_name)
+    product_cjk = cjk_identity_text(product_name)
+    if longest_common_substring_length(source_cjk, product_cjk) >= 4:
+        return True
+    if extract_identity_tokens(source_name, identity_tokens["version"]) & extract_identity_tokens(
+        product_name, identity_tokens["version"]
+    ):
+        return True
+    if extract_character_tokens(source_name, identity_tokens["character"]) & extract_character_tokens(
+        product_name, identity_tokens["character"]
+    ):
+        return True
+    return False
 
 
 def product_similarity(source_name, product_name, identity_tokens):
@@ -241,9 +285,8 @@ def write_match_columns(ws, header_row, columns, row_numbers, matched):
     for row_index, result in zip(row_numbers, matched):
         if result.get("matchStatus") == "exact" and result.get("matchedProductCode"):
             product_code_cell = ws.cell(row_index, columns["產品代號"])
-            if not normalize_product_code(product_code_cell.value):
-                product_code_cell.value = str(result["matchedProductCode"]).zfill(6)
-                product_code_cell.number_format = "@"
+            product_code_cell.value = normalize_product_code(result["matchedProductCode"])
+            product_code_cell.number_format = "@"
 
         candidates = "\n".join(
             f"{candidate['productCode']} {candidate['productName']} ({candidate['score']})"
@@ -257,7 +300,11 @@ def write_match_columns(ws, header_row, columns, row_numbers, matched):
         }
         for header, value in values.items():
             cell = ws.cell(row_index, columns[header])
-            cell.value = value
+            if header == "已建檔代號" and value not in (None, ""):
+                cell.value = normalize_product_code(value)
+                cell.number_format = "@"
+            else:
+                cell.value = value
             if header == "相似候選":
                 cell.alignment = Alignment(wrap_text=True, vertical="top")
         if result.get("productCodeNameWarning"):
@@ -378,6 +425,8 @@ def compare_item(item, products, products_by_code, identity_tokens, threshold, m
     scored = []
     for product in products:
         score = product_similarity(source_name, product["productName"], identity_tokens)
+        if score >= threshold and not has_meaningful_overlap(source_name, product["productName"], identity_tokens):
+            score *= 0.55
         if score >= threshold:
             scored.append(
                 {

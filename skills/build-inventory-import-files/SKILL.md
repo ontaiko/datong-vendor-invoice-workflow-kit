@@ -24,7 +24,7 @@ description: 建檔採購匯入、建檔用檔案、採購單匯入檔、進貨�
 
 ## 輸入 xlsx
 
-只參照經 `$review-invoice-product-check` 覆核調整後、且使用者確認可建檔的進貨單 `.xlsx`，不要再要求或讀取 JSON。輸入表必須符合既定格式並包含：
+只參照經 `$review-invoice-product-check` 覆核調整後、且使用者確認可建檔的進貨單 `.xlsx`，不要再要求或讀取 JSON。`-ProductsXlsx` 可傳入一份或多份同廠商調整檔；多份同廠商檔案會合併成同一組建檔用與採購單匯入檔。不同廠商不得混在同一次執行，採購單需依廠商分開產生。輸入表必須符合既定格式並包含：
 
 - `產品代號`
 - `品名`
@@ -46,10 +46,11 @@ description: 建檔採購匯入、建檔用檔案、採購單匯入檔、進貨�
 6. 建檔用 `.xls` 只放新商品；全部都是既有商品時不建立建檔用檔案。
    - 建檔用範本若包含名為 `分類` 的工作表，輸出正式檔案前必須刪除，不可留在建檔用成品內。
    - 同一次流程若有多個廠商，建檔用只產生一份合併檔，彙整所有廠商的新商品，不依廠商拆檔。
-7. 採購單匯入 `.xls` 放本次全部商品；多廠商時仍依廠商分開產生，因為採購單需要各自的廠商代號。
+7. 採購單匯入 `.xls` 放本次全部商品；同廠商多張調整檔可一次合併輸出同一份採購單。多廠商時仍依廠商分開產生，因為採購單需要各自的廠商代號。
 8. 輸出到工作區根目錄 `建檔進貨用/`。檔名固定為 `[廠商簡稱][建檔用or採購單用][日期]-[流水號].xls`，例如 `萬榮建檔用1150606-01.xls`、`萬榮採購單用1150606-01.xls`。多廠商合併建檔用檔名的廠商簡稱使用該次流程的共同簡稱或 `多廠商`。若同組檔名已存在，流水號遞增為 `02`、`03`，不得覆蓋既有檔案。
-9. 重新開啟輸出檔，確認格式為 `.xls`、標題列符合範本、使用範圍只有標題與實際商品列。
-10. 本技能不主動刪除輸入或中間檔；正式成品驗證後的中間檔清理由 `$convert-vendor-invoice-image` 統一負責。
+9. 採購單匯入範本預設使用完整舊版欄位，包含 `單價`，讓正式採購檔本身可直接核對總額。若現場只有精簡版 `採購日期`、`廠商代號`、`產品代號`、`數量`、`備註1`，腳本仍可依標題自動選擇寫入欄位作為備援。
+10. 重新開啟輸出檔，確認格式為 `.xls`、標題列符合範本、使用範圍只有標題與實際商品列。
+11. 本技能不主動刪除輸入或中間檔；正式成品驗證後的中間檔清理由 `$convert-vendor-invoice-image` 統一負責。
 
 ## 腳本
 
@@ -64,6 +65,26 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\fill-import-templa
   -ConfirmedReviewed
 ```
 
+同廠商多張調整檔要合併輸出時，用逗號陣列傳入 `-ProductsXlsx`：
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\fill-import-templates.ps1 `
+  -WorkspaceRoot "C:\path\to\workspace" `
+  -ProductsXlsx "C:\path\to\第一張[調整].xlsx","C:\path\to\第二張[調整].xlsx" `
+  -VendorShortName "萬榮" `
+  -InvoiceTotal "26078" `
+  -OutputDir "C:\path\to\建檔進貨用" `
+  -ConfirmedReviewed
+```
+
 `-VendorCode` 可省略；省略時會優先從 `參考資料/廠商代號.xlsx` 以廠商簡稱查表。
+
+修改成本或總額驗證後，執行不產生檔案的回歸測試：
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\fill-import-templates.ps1 -RunRegressionTests
+```
+
+測試必須確認南波未稅合計 `32250 × 1.05 = 33862.5` 可對應四捨五入後單據總額 `33863`，且錯誤總額仍會被拒絕。
 
 詳細欄位規則見 [references/import-rules.md](references/import-rules.md)。
