@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 import argparse
 import csv
+import hashlib
 import re
 import unicodedata
 from copy import copy
@@ -48,6 +49,7 @@ STATUS_LABELS = {
     "new": "確認為新品",
 }
 IDENTITY_TOKEN_CSV = "產品比對身份關鍵詞.csv"
+PACKAGED_CSV_MARKER_SUFFIX = ".packaged.sha256"
 WARNING_FILL = PatternFill(fill_type="solid", fgColor="FFF2CC")
 PRODUCT_CODE_NAME_WARNING_THRESHOLD = 0.35
 
@@ -196,7 +198,28 @@ def read_csv_rows(path):
     raise last_error
 
 
+def file_sha256(path):
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def assert_not_packaged_reference_csv(path):
+    marker = path.with_name(path.name + PACKAGED_CSV_MARKER_SUFFIX)
+    if not marker.exists():
+        return
+    expected_hash = marker.read_text(encoding="utf-8").strip().splitlines()[0].strip().lower()
+    if expected_hash and file_sha256(path).lower() == expected_hash:
+        raise SystemExit(
+            f"產品資料參考檔仍是 GitHub 安裝包隨附的舊快照：{path.name}。"
+            "請從門市系統重新匯出今天的產品資料，覆蓋參考資料/產品資料輸出.CSV 後再繼續。"
+        )
+
+
 def assert_current_reference_csv(path):
+    assert_not_packaged_reference_csv(path)
     timezone = ZoneInfo("Asia/Taipei")
     stat = path.stat()
     created_at = datetime.fromtimestamp(stat.st_ctime, timezone)

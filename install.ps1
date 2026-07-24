@@ -17,6 +17,9 @@ try {
 
 $packageRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
 $projectFolderName = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String("5aSn57Wx5bel5L2c5Yqp5omL"))
+$referenceFolderName = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String("5Y+D6ICD6LOH5paZ"))
+$productCsvName = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String("55Si5ZOB6LOH5paZ6Ly45Ye6LkNTVg=="))
+$productCsvMarkerName = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String("55Si5ZOB6LOH5paZ6Ly45Ye6LkNTVi5wYWNrYWdlZC5zaGEyNTY="))
 $inventoryFolderName = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String("5bu65qqU6YCy6LKo55So"))
 $ocrFolderName = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String("6YCy6LKo5ZyW54mH6L2J6Kmm566X6KGo"))
 $invoiceImageFolderName = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String("5bug5ZWG6YCy6LKo5Zau"))
@@ -85,6 +88,25 @@ function Backup-ExistingItem {
     Copy-Item -LiteralPath $Source -Destination $destination -Recurse -Force
 }
 
+function Mark-PackagedProductCsv {
+    $referenceDir = Join-Path $ProjectRoot $referenceFolderName
+    $productCsvPath = Join-Path $referenceDir $productCsvName
+    $markerPath = Join-Path $referenceDir $productCsvMarkerName
+    if (-not (Test-Path -LiteralPath $productCsvPath -PathType Leaf)) { return }
+
+    $oldTimestamp = [datetime]"2000-01-01T00:00:00"
+    $csvItem = Get-Item -LiteralPath $productCsvPath
+    $csvItem.LastWriteTime = $oldTimestamp
+    try {
+        $csvItem.CreationTime = $oldTimestamp
+    } catch {}
+
+    if (-not (Test-Path -LiteralPath $markerPath -PathType Leaf)) {
+        $hash = (Get-FileHash -LiteralPath $productCsvPath -Algorithm SHA256).Hash.ToLowerInvariant()
+        Set-Content -LiteralPath $markerPath -Value $hash -Encoding UTF8
+    }
+}
+
 New-Item -ItemType Directory -Force -Path $ProjectRoot, $CodexHome, $skillsTarget | Out-Null
 
 foreach ($skillName in $skillNames) {
@@ -113,6 +135,7 @@ Get-ChildItem -LiteralPath $projectPackageRoot -Recurse -File | ForEach-Object {
 Backup-ExistingItem -Source $memoryTarget -RelativeDestination "project\PROJECT_MEMORY.md"
 Copy-DirectoryContents -Source (Join-Path $packageRoot "project") -Destination $ProjectRoot
 Copy-Item -LiteralPath $memorySeedSource -Destination $memoryTarget -Force
+Mark-PackagedProductCsv
 
 New-Item -ItemType Directory -Force -Path `
     (Join-Path $ProjectRoot ".codex-tmp"), `
