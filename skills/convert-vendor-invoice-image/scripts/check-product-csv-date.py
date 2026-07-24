@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 from datetime import datetime
 from pathlib import Path
 
@@ -20,6 +21,22 @@ def find_product_csv(workspace_root: Path) -> Path | None:
     return max(candidates, key=lambda path: path.stat().st_mtime) if candidates else None
 
 
+def file_sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def is_packaged_reference_csv(path: Path) -> bool:
+    marker = path.with_name(path.name + ".packaged.sha256")
+    if not marker.exists():
+        return False
+    expected = marker.read_text(encoding="utf-8").strip().splitlines()[0].strip().lower()
+    return bool(expected) and file_sha256(path).lower() == expected
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Check that the product export CSV was created or modified today.")
     parser.add_argument("--workspace-root", required=True, type=Path)
@@ -28,6 +45,13 @@ def main() -> int:
     csv_path = find_product_csv(args.workspace_root.expanduser().resolve())
     if csv_path is None:
         print("找不到參考資料/產品資料輸出*.CSV。")
+        return 2
+
+    if is_packaged_reference_csv(csv_path):
+        print(
+            f"產品資料檔仍是 GitHub 安裝包隨附的舊快照：{csv_path}。"
+            "請從門市系統重新匯出今天的產品資料，覆蓋參考資料/產品資料輸出.CSV 後再繼續。"
+        )
         return 2
 
     stat = csv_path.stat()

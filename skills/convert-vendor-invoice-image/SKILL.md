@@ -48,7 +48,7 @@ python scripts/workflow-state.py show --state <state.json> --compact
 
 遇到以下情況停止並只列需要使用者補充的內容：
 
-- 產品 CSV 不是今天版本或不存在。
+- 產品 CSV 不是今天版本、不存在，或仍是 GitHub 安裝包隨附的舊快照。
 - OCR 關鍵欄位低信心。
 - 新品、相似商品、缺代號、缺大類或拆分方式不明。
 - 子技能要求正式輸出前確認。

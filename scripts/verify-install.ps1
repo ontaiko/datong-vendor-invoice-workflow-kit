@@ -47,6 +47,7 @@ $requiredReferenceNames = @(
     (Decode-Name "5o6h6LO85Zau5Yyv5YWl56+E5L6LLnhscw=="),
     (Decode-Name "55Si5ZOB5q+U5bCN6Lqr5Lu96Zec6Y216KmeLmNzdg=="),
     (Decode-Name "55Si5ZOB6LOH5paZ6Ly45Ye6LkNTVg=="),
+    (Decode-Name "55Si5ZOB6LOH5paZ6Ly45Ye6LkNTVi5wYWNrYWdlZC5zaGEyNTY="),
     (Decode-Name "5bug5ZWG5Luj6JmfLnhsc3g=")
 )
 
