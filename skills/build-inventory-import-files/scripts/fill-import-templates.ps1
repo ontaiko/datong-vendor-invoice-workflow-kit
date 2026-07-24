@@ -1,14 +1,11 @@
 ﻿param(
-    [Parameter(Mandatory = $true)]
-    [string]$WorkspaceRoot,
+    [string]$WorkspaceRoot = "",
 
-    [Parameter(Mandatory = $true)]
-    [string]$ProductsXlsx,
+    [string[]]$ProductsXlsx = @(),
 
     [string]$VendorCode = "",
 
-    [Parameter(Mandatory = $true)]
-    [string]$OutputDir,
+    [string]$OutputDir = "",
 
     [string]$PurchaseDate = "",
 
@@ -22,7 +19,9 @@
 
     [string]$VendorShortName = "",
 
-    [switch]$ConfirmedReviewed
+    [switch]$ConfirmedReviewed,
+
+    [switch]$RunRegressionTests
 )
 
 $SummaryRowNames = @("總價格", "總價", "總計", "合計", "小計", "稅金", "稅額", "折扣", "總數量", "合計數量", "頁碼", "頁次")
@@ -198,6 +197,70 @@ function Apply-AlwaysTaxInclusiveCosts {
     }
 
     return $adjustedCodes
+}
+
+function Assert-AlwaysTaxInclusiveInvoiceTotal {
+    param(
+        [object[]]$Items,
+        [string]$PrintedInvoiceTotal,
+        [string]$VendorName
+    )
+
+    if ([string]::IsNullOrWhiteSpace($PrintedInvoiceTotal)) {
+        return
+    }
+
+    $taxInclusiveTotal = 0.0
+    foreach ($item in $Items) {
+        $taxInclusiveTotal += ([double]$item.quantity * [double]$item.cost)
+    }
+    if (-not (Test-PrintedAmountMatch -Calculated $taxInclusiveTotal -Printed ([double]$PrintedInvoiceTotal))) {
+        throw "Invoice total mismatch after applying the fixed 1.05 tax rule for vendor '$VendorName'."
+    }
+}
+
+function Invoke-TaxRuleRegressionTests {
+    $items = @(
+        [pscustomobject]@{ productCode = "TEST01"; quantity = 1; cost = 32250.0 }
+    )
+
+    $adjusted = @(Apply-AlwaysTaxInclusiveCosts -Items $items -AlreadyAdjustedCodes @())
+    if ($adjusted.Count -ne 1 -or [Math]::Abs(([double]$items[0].cost) - 33862.5) -gt 0.000001) {
+        throw "Regression failed: fixed 1.05 tax adjustment was not applied correctly."
+    }
+
+    Assert-AlwaysTaxInclusiveInvoiceTotal -Items $items -PrintedInvoiceTotal "33863" -VendorName "南波"
+
+    $mismatchRejected = $false
+    try {
+        Assert-AlwaysTaxInclusiveInvoiceTotal -Items $items -PrintedInvoiceTotal "33864" -VendorName "南波"
+    } catch {
+        $mismatchRejected = $true
+    }
+    if (-not $mismatchRejected) {
+        throw "Regression failed: a one-dollar invoice mismatch was not rejected."
+    }
+
+    $fractionalCostItems = @(
+        [pscustomobject]@{
+            productCode = "TEST02"
+            quantity = 20
+            cost = 87.5
+            lineAmount = 1750
+        }
+    )
+    $fractionalAdjusted = @(Resolve-TaxInclusiveCosts -Items $fractionalCostItems -PrintedInvoiceTotal "1750")
+    if ($fractionalAdjusted.Count -ne 0 -or [Math]::Abs(([double]$fractionalCostItems[0].cost) - 87.5) -gt 0.000001) {
+        throw "Regression failed: fractional unit cost was rounded or tax-adjusted unexpectedly."
+    }
+
+    [pscustomobject]@{
+        passed = 4
+        taxAdjustedTotal = $items[0].cost
+        roundedPrintedTotal = 33863
+        mismatchRejected = $mismatchRejected
+        fractionalCostPreserved = $fractionalCostItems[0].cost
+    } | ConvertTo-Json
 }
 
 function Find-HeaderColumn {
@@ -411,9 +474,11 @@ function Read-ProductsFromXlsx {
                 continue
             }
 
-            $quantityText = [string]$worksheet.Cells.Item($row, $columns.quantity).Text
-            $costText = [string]$worksheet.Cells.Item($row, $columns.cost).Text
-            if ([string]::IsNullOrWhiteSpace($quantityText) -and [string]::IsNullOrWhiteSpace($costText)) {
+            # Use the underlying numeric value instead of formatted Text. A cell
+            # displayed with zero decimals can show 87.5 as 88 and corrupt cost checks.
+            $quantityValue = $worksheet.Cells.Item($row, $columns.quantity).Value2
+            $costValue = $worksheet.Cells.Item($row, $columns.cost).Value2
+            if ($null -eq $quantityValue -and $null -eq $costValue) {
                 continue
             }
 
@@ -427,10 +492,10 @@ function Read-ProductsFromXlsx {
             $items += [PSCustomObject]@{
                 productCode = $codeText
                 name = $name
-                recommendedPrice = if ($columns.recommendedPrice -gt 0) { [string]$worksheet.Cells.Item($row, $columns.recommendedPrice).Text } else { "" }
-                quantity = $quantityText
-                cost = $costText
-            lineAmount = if ($columns.lineAmount -gt 0) { [string]$worksheet.Cells.Item($row, $columns.lineAmount).Text } else { "" }
+                recommendedPrice = if ($columns.recommendedPrice -gt 0) { $worksheet.Cells.Item($row, $columns.recommendedPrice).Value2 } else { "" }
+                quantity = $quantityValue
+                cost = $costValue
+            lineAmount = if ($columns.lineAmount -gt 0) { $worksheet.Cells.Item($row, $columns.lineAmount).Value2 } else { "" }
             existingProduct = $existingProduct
             status = $status
             category = $category
@@ -514,6 +579,20 @@ function Get-OutputPairPaths {
     throw "Unable to find a unique output pair for '$safeVendorShortName' on '$FileDate'."
 }
 
+function Get-OutputMutexName {
+    param(
+        [string]$Directory,
+        [string]$VendorShortName,
+        [string]$FileDate
+    )
+
+    $identity = ("{0}|{1}|{2}" -f $Directory, $VendorShortName, $FileDate).ToLowerInvariant()
+    $bytes = [System.Text.Encoding]::UTF8.GetBytes($identity)
+    $hashBytes = [System.Security.Cryptography.SHA256]::Create().ComputeHash($bytes)
+    $hash = [System.BitConverter]::ToString($hashBytes).Replace("-", "")
+    return "Global\DatongInventoryImport_$hash"
+}
+
 function Remove-WorksheetIfExists {
     param(
         $Workbook,
@@ -532,8 +611,37 @@ function Remove-WorksheetIfExists {
     }
 }
 
+if ($RunRegressionTests) {
+    Invoke-TaxRuleRegressionTests
+    return
+}
+
+foreach ($required in @{
+    WorkspaceRoot = $WorkspaceRoot
+    ProductsXlsx = $ProductsXlsx
+    OutputDir = $OutputDir
+}.GetEnumerator()) {
+    if ([string]::IsNullOrWhiteSpace([string]$required.Value)) {
+        throw "Missing required parameter '$($required.Key)'."
+    }
+}
+
 $workspace = (Resolve-Path -LiteralPath $WorkspaceRoot).Path
-$productsPath = (Resolve-Path -LiteralPath $ProductsXlsx).Path
+$productPathInputs = @()
+foreach ($rawProductPath in $ProductsXlsx) {
+    foreach ($part in ([string]$rawProductPath -split ",")) {
+        $cleanPath = $part.Trim().Trim('"').Trim("'")
+        if (-not [string]::IsNullOrWhiteSpace($cleanPath)) {
+            $productPathInputs += $cleanPath
+        }
+    }
+}
+$productPaths = @($productPathInputs | ForEach-Object {
+    (Resolve-Path -LiteralPath $_).Path
+})
+if ($productPaths.Count -eq 0) {
+    throw "Missing required parameter 'ProductsXlsx'."
+}
 
 if (-not $ConfirmedReviewed) {
     throw "建立建檔用與採購單匯入檔前，請先向使用者確認：進貨單資料已檢查並調整完成，可以進行建檔。確認後再以 -ConfirmedReviewed 執行。"
@@ -551,7 +659,10 @@ if ([string]::IsNullOrWhiteSpace($PurchaseTemplate)) {
 
 $newProductTemplatePath = (Resolve-Path -LiteralPath $NewProductTemplate).Path
 $purchaseTemplatePath = (Resolve-Path -LiteralPath $PurchaseTemplate).Path
-$items = @(Read-ProductsFromXlsx -Path $productsPath)
+$items = @()
+foreach ($productPath in $productPaths) {
+    $items += @(Read-ProductsFromXlsx -Path $productPath)
+}
 
 if ($items.Count -eq 0) {
     throw "Products xlsx has no product rows."
@@ -574,7 +685,17 @@ foreach ($item in $items) {
     }
 }
 
-$resolvedVendorShortName = Get-VendorShortNameFromXlsx -Path $productsPath -Fallback $VendorShortName
+$resolvedVendorShortName = ""
+if (-not [string]::IsNullOrWhiteSpace($VendorShortName)) {
+    $resolvedVendorShortName = $VendorShortName
+} else {
+    $vendorNames = @($productPaths | ForEach-Object { Get-VendorShortNameFromXlsx -Path $_ -Fallback "" } | Select-Object -Unique)
+    if ($vendorNames.Count -eq 1) {
+        $resolvedVendorShortName = $vendorNames[0]
+    } else {
+        throw "多份 ProductsXlsx 含不同廠商：$($vendorNames -join ', ')。採購單匯入需依廠商分開產生，請分批執行或明確指定同一廠商資料。"
+    }
+}
 if ([string]::IsNullOrWhiteSpace($VendorCode)) {
     if ($resolvedVendorShortName -match "萬榮") {
         $VendorCode = "38"
@@ -583,23 +704,43 @@ if ([string]::IsNullOrWhiteSpace($VendorCode)) {
         $VendorCode = Resolve-VendorCodeFromWorkbook -WorkbookPath $vendorWorkbookPath -VendorName $resolvedVendorShortName
     }
 }
-$taxAdjustedCodes = @(Resolve-TaxInclusiveCosts -Items @($items) -PrintedInvoiceTotal $InvoiceTotal)
-if (Test-AlwaysTaxInclusiveVendor -VendorName $resolvedVendorShortName) {
+$alwaysTaxInclusiveVendor = Test-AlwaysTaxInclusiveVendor -VendorName $resolvedVendorShortName
+$invoiceTotalForInitialCheck = if ($alwaysTaxInclusiveVendor) { "" } else { $InvoiceTotal }
+$taxAdjustedCodes = @(Resolve-TaxInclusiveCosts -Items @($items) -PrintedInvoiceTotal $invoiceTotalForInitialCheck)
+if ($alwaysTaxInclusiveVendor) {
     $forcedTaxAdjustedCodes = @(Apply-AlwaysTaxInclusiveCosts -Items @($items) -AlreadyAdjustedCodes $taxAdjustedCodes)
     $taxAdjustedCodes = @($taxAdjustedCodes + $forcedTaxAdjustedCodes | Select-Object -Unique)
+
+    Assert-AlwaysTaxInclusiveInvoiceTotal -Items @($items) -PrintedInvoiceTotal $InvoiceTotal -VendorName $resolvedVendorShortName
 }
 $newItems = @($items | Where-Object { -not ($_.existingProduct -eq $true) })
 
 $dateText = Get-RocDate -Value $PurchaseDate
 $fileDate = $dateText.Replace(".", "")
-$outputPair = Get-OutputPairPaths -Directory $outputPath -VendorShortName $resolvedVendorShortName -FileDate $fileDate -IncludeNewProduct ($newItems.Count -gt 0)
-$newProductOutput = $outputPair.newProduct
-$purchaseOutput = $outputPair.purchase
+$outputMutexName = Get-OutputMutexName -Directory $outputPath -VendorShortName $resolvedVendorShortName -FileDate $fileDate
+$outputMutex = New-Object System.Threading.Mutex($false, $outputMutexName)
+$outputMutexAcquired = $false
+try {
+    $outputMutexAcquired = $outputMutex.WaitOne([TimeSpan]::FromMinutes(2))
+    if (-not $outputMutexAcquired) {
+        throw "Timed out waiting for output filename lock '$outputMutexName'."
+    }
 
-if ($newItems.Count -gt 0) {
-    Copy-Item -LiteralPath $newProductTemplatePath -Destination $newProductOutput
+    $outputPair = Get-OutputPairPaths -Directory $outputPath -VendorShortName $resolvedVendorShortName -FileDate $fileDate -IncludeNewProduct ($newItems.Count -gt 0)
+    $newProductOutput = $outputPair.newProduct
+    $purchaseOutput = $outputPair.purchase
+
+    if ($newItems.Count -gt 0) {
+        Copy-Item -LiteralPath $newProductTemplatePath -Destination $newProductOutput
+    }
+    Copy-Item -LiteralPath $purchaseTemplatePath -Destination $purchaseOutput
 }
-Copy-Item -LiteralPath $purchaseTemplatePath -Destination $purchaseOutput
+finally {
+    if ($outputMutexAcquired) {
+        $outputMutex.ReleaseMutex()
+    }
+    $outputMutex.Dispose()
+}
 
 $excel = $null
 $newProductWorkbook = $null
@@ -653,13 +794,29 @@ try {
 
     $purchaseWorkbook = $excel.Workbooks.Open($purchaseOutput)
     $purchaseWorksheet = $purchaseWorkbook.Worksheets.Item("工作表1")
-    Assert-Headers -Worksheet $purchaseWorksheet -Expected @(
+    $fullPurchaseHeaders = @(
         "採購日期", "廠商代號", "外幣幣別", "產品代號", "數量",
         "單位", "單價", "外幣單價", "產品備註", "備註1",
         "備註2", "備註3", "預定進貨日", "廠商訂單", "自訂櫃號"
     )
-    $purchaseWorksheet.Range("A2:O65536").ClearContents() | Out-Null
-    $purchaseWorksheet.Columns.Item(4).NumberFormat = "@"
+    $compactPurchaseHeaders = @("採購日期", "廠商代號", "產品代號", "數量", "備註1")
+    $isCompactPurchaseTemplate = $true
+    for ($column = 1; $column -le $compactPurchaseHeaders.Count; $column++) {
+        $actual = [string]$purchaseWorksheet.Cells.Item(1, $column).Text
+        if ($actual -ne $compactPurchaseHeaders[$column - 1]) {
+            $isCompactPurchaseTemplate = $false
+            break
+        }
+    }
+
+    if ($isCompactPurchaseTemplate) {
+        $purchaseWorksheet.Range("A2:E65536").ClearContents() | Out-Null
+        $purchaseWorksheet.Columns.Item(3).NumberFormat = "@"
+    } else {
+        Assert-Headers -Worksheet $purchaseWorksheet -Expected $fullPurchaseHeaders
+        $purchaseWorksheet.Range("A2:O65536").ClearContents() | Out-Null
+        $purchaseWorksheet.Columns.Item(4).NumberFormat = "@"
+    }
 
     for ($index = 0; $index -lt $items.Count; $index++) {
         $row = $index + 2
@@ -667,13 +824,20 @@ try {
 
         $purchaseWorksheet.Cells.Item($row, 1).Value2 = [string]$dateText
         $purchaseWorksheet.Cells.Item($row, 2).Value2 = [string]$VendorCode
-        $purchaseWorksheet.Cells.Item($row, 4).Value2 = [string]$item.productCode
-        $purchaseWorksheet.Cells.Item($row, 5).Value2 = [double]$item.quantity
-        $purchaseWorksheet.Cells.Item($row, 6).Value2 = [string]"pcs"
-        $purchaseWorksheet.Cells.Item($row, 7).Value2 = [double]$item.cost
-        $purchaseWorksheet.Cells.Item($row, 10).Value2 = [string]$Note1
+        if ($isCompactPurchaseTemplate) {
+            $purchaseWorksheet.Cells.Item($row, 3).Value2 = [string]$item.productCode
+            $purchaseWorksheet.Cells.Item($row, 4).Value2 = [double]$item.quantity
+            $purchaseWorksheet.Cells.Item($row, 5).Value2 = [string]$Note1
+        } else {
+            $purchaseWorksheet.Cells.Item($row, 4).Value2 = [string]$item.productCode
+            $purchaseWorksheet.Cells.Item($row, 5).Value2 = [double]$item.quantity
+            $purchaseWorksheet.Cells.Item($row, 6).Value2 = [string]"pcs"
+            $purchaseWorksheet.Cells.Item($row, 7).Value2 = [double]$item.cost
+            $purchaseWorksheet.Cells.Item($row, 10).Value2 = [string]$Note1
+        }
     }
-    Remove-TrailingBlankRows -Worksheet $purchaseWorksheet -LastDataRow ($items.Count + 1) -LastColumn "O"
+    $purchaseLastColumn = if ($isCompactPurchaseTemplate) { "E" } else { "O" }
+    Remove-TrailingBlankRows -Worksheet $purchaseWorksheet -LastDataRow ($items.Count + 1) -LastColumn $purchaseLastColumn
     $purchaseWorkbook.Save()
     $purchaseWorkbook.Close($true)
     Release-ComObjects @($purchaseWorksheet, $purchaseWorkbook)
@@ -705,6 +869,7 @@ finally {
     purchaseDate = $dateText
     vendorCode = $VendorCode
     rowCount = $items.Count
+    sourceFileCount = $productPaths.Count
     newProductRowCount = $newItems.Count
     existingProductRowCount = ($items.Count - $newItems.Count)
     taxAdjustedProductCodes = $taxAdjustedCodes
