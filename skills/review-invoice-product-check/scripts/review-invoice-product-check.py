@@ -89,10 +89,15 @@ def read_csv_dicts(path: Path) -> list[dict[str, str]]:
 
 
 def normalize_product_code(value: str) -> str:
-    text = str(value or "").strip()
+    if isinstance(value, float) and value.is_integer():
+        text = str(int(value))
+    else:
+        text = str(value or "").strip()
     formula_match = re.fullmatch(r'=\s*"(\d+)"', text)
     if formula_match:
-        return formula_match.group(1)
+        text = formula_match.group(1)
+    if re.fullmatch(r"\d{1,6}", text):
+        return text.zfill(6)
     return text
 
 
@@ -413,15 +418,20 @@ def is_existing_row(ws, row: int, headers: dict[str, int]) -> bool:
 def fill_existing_product_codes(ws, rows: list[int], headers: dict[str, int]) -> None:
     code_col = headers["產品代號"]
     matched_code_col = headers.get("已建檔代號")
-    if not matched_code_col:
-        return
     for row in rows:
         if not is_existing_row(ws, row, headers):
             continue
         code_cell = ws.cell(row, code_col)
-        matched_code = str(ws.cell(row, matched_code_col).value or "").strip()
-        if (code_cell.value is None or str(code_cell.value).strip() == "") and CODE_RE.match(matched_code):
-            code_cell.value = matched_code
+        matched_code = ""
+        if matched_code_col:
+            matched_code_cell = ws.cell(row, matched_code_col)
+            matched_code = normalize_product_code(matched_code_cell.value)
+            if CODE_RE.match(matched_code):
+                matched_code_cell.value = matched_code
+                matched_code_cell.number_format = "@"
+        normalized_code = matched_code or normalize_product_code(code_cell.value)
+        if CODE_RE.match(normalized_code):
+            code_cell.value = normalized_code
             code_cell.number_format = "@"
 
 
@@ -606,10 +616,20 @@ def brand_rule_keywords(row: dict[str, str]) -> list[str]:
 
 
 def matched_brand_keyword(raw_name: str, row: dict[str, str]) -> str:
-    for keyword in brand_rule_keywords(row):
-        if keyword and keyword in raw_name:
-            return keyword
-    return ""
+    matches = [keyword for keyword in brand_rule_keywords(row) if keyword and keyword in raw_name]
+    return max(matches, key=len, default="")
+
+
+def matched_brand_rule_candidates(
+    raw_name: str, brand_rule_rows: list[dict[str, str]]
+) -> list[tuple[dict[str, str], str]]:
+    candidates: list[tuple[int, int, dict[str, str], str]] = []
+    for index, row in enumerate(brand_rule_rows):
+        keyword = matched_brand_keyword(raw_name, row)
+        if keyword:
+            candidates.append((-len(keyword), index, row, keyword))
+    candidates.sort(key=lambda item: (item[0], item[1]))
+    return [(row, keyword) for _, _, row, keyword in candidates]
 
 
 def sample_adjusted_name(raw_name: str, row: dict[str, str]) -> str | None:
@@ -627,7 +647,7 @@ def adjust_name_by_brand_rule(raw_name: str, brand_rule_rows: list[dict[str, str
         if example_name is not None:
             return example_name
 
-        keyword = matched_brand_keyword(raw_name, row)
+    for row, keyword in matched_brand_rule_candidates(raw_name, brand_rule_rows):
         label = row.get("括號名稱", "").strip()
         position_rule = row.get("位置規則", "").strip()
         if not keyword or not label:
@@ -651,13 +671,17 @@ def adjust_name_by_brand_rule(raw_name: str, brand_rule_rows: list[dict[str, str
 def infer_category_from_brand_rules(adjusted_name: str, brand_rule_rows: list[dict[str, str]]) -> str | None:
     label_match = PREFIX_RE.match(adjusted_name)
     label = label_match.group(1) if label_match else ""
+    for row, _ in matched_brand_rule_candidates(adjusted_name, brand_rule_rows):
+        category = row.get("大類", "").strip()
+        if category:
+            return category
+
     for row in brand_rule_rows:
         category = row.get("大類", "").strip()
         if not category:
             continue
         row_label = row.get("括號名稱", "").strip()
-        keywords = brand_rule_keywords(row)
-        if (row_label and row_label == label) or any(keyword and keyword in adjusted_name for keyword in keywords):
+        if row_label and row_label == label:
             return category
     return None
 
@@ -669,13 +693,13 @@ def adjust_name(
     brand_rule_rows: list[dict[str, str]],
 ) -> str:
     raw_name = raw_name.strip()
-    formal_name = normalize_formal_brand_name(raw_name, brand_rules)
-    if formal_name is not None and FORMAL_NAME_RE.match(formal_name):
-        return formal_name
-
     brand_rule_name = adjust_name_by_brand_rule(raw_name, brand_rule_rows)
     if brand_rule_name is not None:
         return brand_rule_name
+
+    formal_name = normalize_formal_brand_name(raw_name, brand_rules)
+    if formal_name is not None and FORMAL_NAME_RE.match(formal_name):
+        return formal_name
 
     known_pattern_name = adjust_name_by_known_pattern(raw_name)
     if known_pattern_name is not None:
@@ -805,15 +829,30 @@ def print_confirmation_table(
 
     print("請確認以下內容是否正確：")
     print("")
-    print("| 產品代號 | 產品名稱 | 大類 |")
-    print("| --- | --- | --- |")
+    pending_rows: list[tuple[str, str]] = []
+    coded_rows: list[tuple[str, str, str]] = []
     for row in rows:
         code = str(ws.cell(row, code_col).value or "").strip()
         name = str(ws.cell(row, name_col).value or "").strip()
         category = display_category_value(ws.cell(row, category_col).value, category_names)
-        print(f"| {code} | {name} | {category} |")
+        if code:
+            coded_rows.append((code, name, category))
+        else:
+            pending_rows.append((name, category))
+    if pending_rows:
+        print("請貼回代號：")
+        print("產品名稱\t大類")
+        for name, category in pending_rows:
+            print(f"{name}\t{category}")
+    if coded_rows:
+        if pending_rows:
+            print("")
+        print("已含代號項目：")
+        print("產品代號\t產品名稱\t大類")
+        for code, name, category in coded_rows:
+            print(f"{code}\t{name}\t{category}")
     print("")
-    print("若名稱與大類正確，請直接貼上產品代號；若要修改，也可一起貼上產品名稱或大類。")
+    print("若名稱與大類正確，請在每列最前方補上產品代號後貼回；若要修改，也可一起貼上產品名稱或大類。")
 
 
 def print_code_problems(problems: list[tuple[int, str, str]]) -> None:
@@ -879,7 +918,10 @@ def main() -> None:
 
     for row in rows:
         code_cell = ws.cell(row, code_col)
-        code_text = "" if code_cell.value is None else str(code_cell.value).strip()
+        if is_existing_row(ws, row, headers):
+            code_text = normalize_product_code(code_cell.value)
+        else:
+            code_text = "" if code_cell.value is None else str(code_cell.value).strip()
         code_cell.value = code_text
         code_cell.number_format = "@"
 

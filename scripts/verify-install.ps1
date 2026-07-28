@@ -61,9 +61,13 @@ foreach ($skillName in $skillNames) {
     $requiredFiles += Join-Path $CodexHome "skills\$skillName\SKILL.md"
 }
 $requiredFiles += Join-Path $CodexHome "skills\convert-vendor-invoice-image\scripts\check-product-csv-date.py"
+$requiredFiles += Join-Path $CodexHome "skills\convert-vendor-invoice-image\scripts\workflow-state.py"
 $requiredFiles += Join-Path $CodexHome "skills\extract-vendor-invoice-image\scripts\local_paddleocr_invoice_to_xlsx.py"
+$requiredFiles += Join-Path $CodexHome "skills\extract-vendor-invoice-image\scripts\run-liying-regression-tests.py"
 $requiredFiles += Join-Path $CodexHome "skills\match-product-catalog\scripts\match-existing-products.py"
+$requiredFiles += Join-Path $CodexHome "skills\match-product-catalog\scripts\run-regression-tests.py"
 $requiredFiles += Join-Path $CodexHome "skills\review-invoice-product-check\scripts\review-invoice-product-check.py"
+$requiredFiles += Join-Path $CodexHome "skills\review-invoice-product-check\scripts\run-regression-tests.py"
 $requiredFiles += Join-Path $CodexHome "skills\build-inventory-import-files\scripts\fill-import-templates.ps1"
 
 $missing = @($requiredFiles | Where-Object { -not (Test-Path -LiteralPath $_ -PathType Leaf) })
