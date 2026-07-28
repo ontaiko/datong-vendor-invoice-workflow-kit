@@ -59,7 +59,7 @@ PRODUCT_CODE_RE = re.compile(
     r"^\s*(?:\d+\s*)?((?:[A-Z]{2,8}-[A-Z0-9]+)|(?:[A-Z]{2,8}\d{4,})|(?:\d{6}))\s*(.*)$"
 )
 YUANDA_ITEM_RE = re.compile(r"^\s*(?:\d+\s+)?(\d{9})(.*)$")
-LIYING_ITEM_RE = re.compile(r"^\s*(TM[A-Z0-9]{3,6})\s*$")
+LIYING_ITEM_RE = re.compile(r"^\s*(TM[A-Z0-9]{3,6}|[A-Z]{2}\d{5})\s*$")
 NUMBER_RE = re.compile(r"-?\d+(?:,\d{3})*(?:\.\d+)?")
 MONEY_DECIMAL_RE = re.compile(r"\d,\d{3}\.\d+|\d{2,4}\.\d+")
 MONEY_INTEGER_RE = re.compile(r"-?(?:\d{1,3}(?:,\d{3})+|\d{1,6})")
@@ -165,6 +165,13 @@ def extract_integer_money(text: str) -> float | None:
     if not matches:
         return None
     return parse_number_text(matches[-1].group(0))
+
+
+def extract_amount_integer(text: str) -> float | None:
+    stripped = text.strip()
+    if re.fullmatch(r"\d{1,3}\.\d{3}", stripped):
+        return parse_number_text(stripped.replace(".", ""))
+    return extract_integer_money(text)
 
 
 def compact_amount(value: float | None) -> int | float | None:
@@ -401,7 +408,12 @@ def split_stacked_pages(image: Image.Image) -> list[tuple[str, Image.Image]]:
     split_y = low + local_index
     minimum = float(center[local_index])
     baseline = float(np.median(center))
-    if baseline < 0.06 or minimum > min(0.065, baseline * 0.5):
+    edge_center = edge_ratio[low:high]
+    edge_minimum = float(edge_center[local_index]) if edge_center.size else 1.0
+    edge_baseline = float(np.median(edge_center)) if edge_center.size else 1.0
+    valley_is_clear = minimum <= baseline * 0.58
+    edge_is_clear = edge_baseline > 0 and edge_minimum <= max(0.018, edge_baseline * 0.40)
+    if baseline < 0.06 or not (valley_is_clear and edge_is_clear):
         return [("page1", image)]
     if not (height * 0.30 <= split_y <= height * 0.70):
         return [("page1", image)]
@@ -624,6 +636,17 @@ def is_yuanda_invoice(entries: list[OcrEntry]) -> bool:
     return has_yuanda_amount_header and has_yuanda_total and has_9_digit_anchor
 
 
+def is_wanrong_invoice(entries: list[OcrEntry]) -> bool:
+    text = " ".join(entry.text for entry in entries)
+    if "萬榮" in text:
+        return True
+    has_wanrong_contact = "2836" in text or "士東路45" in text
+    has_wanrong_layout = all(term in text for term in ("銷貨憑單", "售價", "折", "進價", "金額"))
+    gsc_count = sum(1 for entry in entries if entry.text.strip().upper().startswith("GSC-"))
+    has_pcs = any(is_unit_token(entry.text) for entry in entries)
+    return bool(has_wanrong_contact or (has_wanrong_layout and has_pcs and gsc_count >= 2))
+
+
 def is_liying_invoice(entries: list[OcrEntry]) -> bool:
     nearby_text = " ".join(entry.text for entry in entries)
     if "麗嬰" in nearby_text or "丽婴" in nearby_text:
@@ -705,12 +728,15 @@ def auto_align_numeric_columns(
             if unit_cost is not None:
                 unit_cost_candidates.append((entry, unit_cost))
         if entry.x >= amount_left:
-            amount = extract_integer_money(entry.text)
+            amount = extract_amount_integer(entry.text)
             if amount is not None:
                 amount_candidates.append((entry, amount))
 
     if len(unit_cost_candidates) != row_count or len(amount_candidates) != row_count:
         return rows
+
+    ordered_unit_costs = [value for _entry, value in sorted(unit_cost_candidates, key=lambda item: item[0].y)]
+    ordered_amounts = [value for _entry, value in sorted(amount_candidates, key=lambda item: item[0].y)]
 
     quantity_by_row: dict[int, tuple[int, float]] = {}
     max_distance = max(45, typical_spacing * 0.90)
@@ -723,6 +749,16 @@ def auto_align_numeric_columns(
         if existing is None or distance < existing[1]:
             quantity_by_row[nearest_index] = (quantity, distance)
 
+    for index, (unit_cost, amount) in enumerate(zip(ordered_unit_costs, ordered_amounts)):
+        if index in quantity_by_row:
+            continue
+        inferred = inferred_unit_cost(unit_cost, amount)
+        if inferred is None or abs(inferred - round(inferred)) > 0.001:
+            continue
+        inferred_quantity = int(round(inferred))
+        if invoice_amount_matches(inferred_quantity, unit_cost, amount):
+            quantity_by_row[index] = (inferred_quantity, 0.0)
+
     total_quantity = infer_total_quantity(entries)
     if len(quantity_by_row) == row_count - 1 and total_quantity is not None:
         missing_indexes = [index for index in range(row_count) if index not in quantity_by_row]
@@ -733,9 +769,9 @@ def auto_align_numeric_columns(
     if len(quantity_by_row) != row_count:
         return rows
 
-    ordered_unit_costs = [value for _entry, value in sorted(unit_cost_candidates, key=lambda item: item[0].y)]
-    ordered_amounts = [value for _entry, value in sorted(amount_candidates, key=lambda item: item[0].y)]
     ordered_quantities = [quantity_by_row[index][0] for index in range(row_count)]
+    if total_quantity is not None and sum(ordered_quantities) != total_quantity:
+        return rows
     if not all(
         invoice_amount_matches(quantity, unit_cost, amount)
         for quantity, unit_cost, amount in zip(ordered_quantities, ordered_unit_costs, ordered_amounts)
@@ -939,6 +975,8 @@ def infer_vendor(entries: list[OcrEntry]) -> str:
         return "麗嬰國際股份有限公司"
     if is_yuanda_invoice(entries):
         return "元大玩具股份有限公司"
+    if is_wanrong_invoice(entries):
+        return "萬榮國際企業股份有限公司"
     for entry in entries[:20]:
         if "公司" in entry.text or "商行" in entry.text:
             return entry.text
@@ -979,10 +1017,14 @@ def header_positions(entries: list[OcrEntry]) -> tuple[float, dict[str, float]]:
         if "折" in text:
             positions["discount"].append(entry.x)
             matched = True
-        if "進價" in text or "單價" in text or ("價" in text and "售價" not in text and entry.x > width * 0.55):
+        is_factory_price_label = "日幣" in text or "廠價" in text or "厂价" in text
+        if "進價" in text or "單價" in text or (
+            "價" in text and "售價" not in text and not is_factory_price_label and entry.x > width * 0.55
+        ):
             positions["unit_cost"].append(entry.x)
             matched = True
-        if "金額" in text or "金额" in text or ("金" in text and entry.x > width * 0.65):
+        is_total_label = any(term in text for term in ["總金額", "总金额", "總額", "总额", "合計"])
+        if not is_total_label and ("金額" in text or "金额" in text or ("金" in text and entry.x > width * 0.65)):
             positions["amount"].append(entry.x)
             matched = True
         if matched:
@@ -1084,6 +1126,45 @@ def nearest_value_by_y(
     return min(candidates, key=lambda item: (item[0], item[1]))[2] if candidates else None
 
 
+def ordered_values_by_x(
+    entries: list[OcrEntry],
+    target_x: float,
+    parser: Any,
+    max_dx: float,
+    validator: Any | None = None,
+) -> list[Any]:
+    candidates = []
+    for entry in entries:
+        value = parser(entry.text)
+        if value is None:
+            continue
+        if validator is not None and not validator(value):
+            continue
+        dx = abs(entry.x - target_x)
+        if dx <= max_dx:
+            candidates.append((entry.y, entry.x, value))
+    return [value for _y, _x, value in sorted(candidates, key=lambda item: (item[0], item[1]))]
+
+
+def liying_horizontal_column_sequences(
+    entries: list[OcrEntry],
+    positions: dict[str, float],
+    row_count: int,
+) -> dict[str, list[Any]]:
+    sequence_specs = {
+        "retail": (positions["list_price"], extract_quantity, 80, lambda value: 50 <= value <= 999),
+        "quantity": (positions["quantity"], extract_quantity, 40, lambda value: 1 <= value <= 999),
+        "unit_cost": (positions["unit_cost"], extract_decimal_money, 75, lambda value: value > 0),
+        "amount": (positions["amount"], extract_integer_money, 80, lambda value: value > 0),
+    }
+    sequences: dict[str, list[Any]] = {}
+    for key, (target_x, parser, max_dx, validator) in sequence_specs.items():
+        values = ordered_values_by_x(entries, target_x, parser, max_dx, validator)
+        if len(values) == row_count:
+            sequences[key] = values
+    return sequences
+
+
 def infer_liying_retail(unit_cost: float | None, retail: int | None) -> int | None:
     valid_prices = {150, 195, 250, 280, 295}
     if retail in valid_prices:
@@ -1105,6 +1186,8 @@ def infer_liying_retail(unit_cost: float | None, retail: int | None) -> int | No
 
 def normalize_liying_name(name: str) -> str:
     normalized = normalize_ocr_name(name).replace("_日產", " 日產")
+    normalized = normalized.replace("噴火龍Y公 存", "噴火龍Y公仔")
+    normalized = normalized.replace("噴火龍Y公存", "噴火龍Y公仔")
     marker = re.search(r"(?:亞版#\d+_\d+|#\d+_\d+|#PRM\d+|A[O0]-\d+|UTR\d+)", normalized)
     if marker and marker.start() > 0:
         normalized = f"{normalized[marker.start():]} {normalized[:marker.start()]}".strip()
@@ -1187,6 +1270,10 @@ def parse_liying_horizontal_rows(entries: list[OcrEntry], anchors: list[OcrEntry
     anchors = sorted(anchors, key=lambda entry: entry.y)
     spacings = [anchors[i + 1].y - anchors[i].y for i in range(len(anchors) - 1) if anchors[i + 1].y > anchors[i].y]
     typical_spacing = median(spacings) if spacings else 45
+    table_top = min(anchor.box[1] for anchor in anchors) - typical_spacing
+    table_bottom = max(anchor.box[3] for anchor in anchors) + typical_spacing
+    table_entries = [entry for entry in entries if table_top <= entry.y <= table_bottom]
+    column_sequences = liying_horizontal_column_sequences(table_entries, positions, len(anchors))
     rows: list[ProductRow] = []
     for idx, anchor in enumerate(anchors):
         previous_anchor = anchors[idx - 1] if idx > 0 else None
@@ -1207,22 +1294,30 @@ def parse_liying_horizontal_rows(entries: list[OcrEntry], anchors: list[OcrEntry
         ]
         name = normalize_liying_name(" ".join(name_parts)) or anchor.text
         issue_parts = suspicious_name_issues(name)
-        retail = nearest_value_by_x(
-            row_entries,
-            positions["list_price"],
-            extract_quantity,
-            80,
-            lambda value: 50 <= value <= 999,
-        )
-        quantity = nearest_value_by_x(
-            row_entries,
-            positions["quantity"],
-            extract_quantity,
-            80,
-            lambda value: 1 <= value <= 999,
-        )
-        unit_cost = nearest_value_by_x(row_entries, positions["unit_cost"], extract_decimal_money, 95)
-        amount = nearest_value_by_x(row_entries, positions["amount"], extract_integer_money, 95)
+        retail = column_sequences.get("retail", [None] * len(anchors))[idx]
+        if retail is None:
+            retail = nearest_value_by_x(
+                row_entries,
+                positions["list_price"],
+                extract_quantity,
+                80,
+                lambda value: 50 <= value <= 999,
+            )
+        quantity = column_sequences.get("quantity", [None] * len(anchors))[idx]
+        if quantity is None:
+            quantity = nearest_value_by_x(
+                row_entries,
+                positions["quantity"],
+                extract_quantity,
+                45,
+                lambda value: 1 <= value <= 999,
+            )
+        unit_cost = column_sequences.get("unit_cost", [None] * len(anchors))[idx]
+        if unit_cost is None:
+            unit_cost = nearest_value_by_x(row_entries, positions["unit_cost"], extract_decimal_money, 95)
+        amount = column_sequences.get("amount", [None] * len(anchors))[idx]
+        if amount is None:
+            amount = nearest_value_by_x(row_entries, positions["amount"], extract_integer_money, 95)
         retail = infer_liying_retail(unit_cost, retail)
         amount, check = validate_liying_numbers(quantity, unit_cost, amount, issue_parts)
         if retail is None:
@@ -1662,6 +1757,26 @@ def infer_total(entries: list[OcrEntry], rows: list[ProductRow]) -> float | None
             number = clean_number(entry.text)
             if number is not None and number > 0:
                 return number
+    total_labels = [
+        entry
+        for entry in entries
+        if ("總計" in entry.text or "总计" in entry.text or "合計" in entry.text)
+        and "數量" not in entry.text
+        and "数量" not in entry.text
+    ]
+    page_right = max((entry.box[2] for entry in entries), default=0) * 0.72
+    for label in sorted(total_labels, key=lambda item: ("總" not in item.text and "总" not in item.text, item.y)):
+        candidates: list[tuple[float, float, float]] = []
+        for candidate in entries:
+            if candidate is label or abs(candidate.y - label.y) > 90:
+                continue
+            if candidate.x < label.x and candidate.x < page_right:
+                continue
+            number = clean_number(candidate.text)
+            if number is not None and number > 0:
+                candidates.append((abs(candidate.y - label.y), -candidate.x, number))
+        if candidates:
+            return min(candidates, key=lambda item: (item[0], item[1]))[2]
     for i, entry in enumerate(entries):
         if ("總計" in entry.text or "总计" in entry.text) and "數量總計" not in entry.text:
             nearby = entries[i : i + 5]
