@@ -72,6 +72,8 @@ powershell -NoProfile -ExecutionPolicy Bypass -File ".\install.ps1"
 
 ## Codex 內使用
 
+詳細操作請先看：[進貨流程使用說明](docs/workflow-usage-guide.md)。
+
 上傳或提供進貨單圖片時，Codex 會依 `AGENTS.md` 與 `convert-vendor-invoice-image` 啟動流程：
 
 1. OCR 圖片轉試算表
