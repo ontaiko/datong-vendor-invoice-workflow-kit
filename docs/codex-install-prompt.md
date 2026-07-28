@@ -16,7 +16,7 @@ Codex 讀到後要做的事情：
 4. 等待 Python 套件安裝、5 組離線 OCR 模型複製與初始化完成，不要因數分鐘沒有輸出而重複啟動。
 5. 確認安裝程式最後的 5 技能、本機引擎、5 組離線模型、專案參考資料與 Excel COM 檢查結果。
 6. 確認 `%USERPROFILE%\Documents\大統工作助手\PROJECT_MEMORY.md` 已建立並可讀取。
-7. 安裝完成後提醒使用者重開 Codex。
+7. 安裝完成後提醒使用者重開 Codex，並先閱讀 `docs/workflow-usage-guide.md` 了解進貨流程使用方式。
 
 安裝要求：
 
@@ -39,3 +39,5 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File ".\scripts\verify-instal
 ```
 
 然後告訴我是否可以開始使用 `convert-vendor-invoice-image`。
+
+開始實際處理進貨單前，請先打開 `docs/workflow-usage-guide.md`，照裡面的停止點與確認格式執行。
