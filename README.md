@@ -7,8 +7,11 @@
 - 商品與廠商參考資料
 - 整個大統工作助手的可攜式專案記憶
 - OCR 設定、本機引擎自動安裝／驗證腳本，以及 5 組可離線使用的 OCR 模型
+- 可選用的 Windows 桌面版「大統進貨助手」原始碼、測試與已驗證 EXE
 
-本工作包完全依賴 Codex 執行流程，不包含額外桌面程式。
+原本的 Codex 安裝流程與 `install.ps1` 維持不變，不會自動安裝桌面 APP。需要不透過 AI 操作時，可另外使用 `desktop-app`。
+
+只需要 Windows APP 的電腦，可直接從 [GitHub Releases](https://github.com/ontaiko/datong-vendor-invoice-workflow-kit/releases) 下載最新版 `Datong-Invoice-Assistant-Setup-*.exe`，雙擊後完成 APP、專用 OCR 引擎與離線模型安裝。
 
 ## 安裝方式
 
@@ -80,6 +83,21 @@ powershell -NoProfile -ExecutionPolicy Bypass -File ".\install.ps1"
 2. 產品資料比對
 3. 產品名稱、大類、產品代號覆核
 4. 建檔用與採購匯入檔輸出
+
+## Windows 桌面 APP
+
+`desktop-app` 提供不依賴 ChatGPT、Codex 或雲端 AI API 的本機操作介面，使用 OpenCV、PaddleOCR、RapidFuzz、openpyxl 與 Excel COM 執行相同的 OCR、產品比對、人工覆核與正式輸出流程。
+
+目前上傳內容包含：
+
+- `大統進貨助手.exe`
+- 完整 Python／PowerShell 原始碼
+- APP 必要參考資料與舊快照 SHA256 防護
+- 自動回歸測試
+- `build_exe.ps1` 與 `package-manifest.json`
+- `installer` 一鍵安裝、升級備份、安裝驗證與解除安裝設定
+
+操作、環境需求與重新打包方式請看：[Windows APP 使用說明](desktop-app/README.md)。
 
 ## 更新產品資料
 

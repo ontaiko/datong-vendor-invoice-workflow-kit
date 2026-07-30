@@ -1,1 +1,2 @@
 engine/official_models/** -text
+desktop-app/** -text whitespace=-trailing-space
