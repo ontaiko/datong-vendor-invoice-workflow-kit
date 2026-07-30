@@ -11,3 +11,6 @@ engine/wheelhouse/
 engine/*.zip
 project/建檔進貨用/**/*.xlsx
 project/建檔進貨用/**/*.xls
+desktop-app/app_settings.json
+desktop-app/*.spec
+desktop-app/legacy_*/

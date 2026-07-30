@@ -1,0 +1,83 @@
+{
+  "schema_version": 1,
+  "app_name": "大統進貨助手",
+  "generated_at": "2026-07-30T17:12:46+08:00",
+  "file_count": 15,
+  "files": [
+    {
+      "path": "invoice_ocr_excel_gui.py",
+      "size": 77888,
+      "sha256": "f7ab4cdb8339b52df92dcdb209706928c7ea7842fd3b2fb808564bc3de323a7b"
+    },
+    {
+      "path": "invoice_workflow.py",
+      "size": 72635,
+      "sha256": "7cc4ce33544643777a62c3bb49f5fde68d3db4b221d481265571655554f5936b"
+    },
+    {
+      "path": "build_exe.ps1",
+      "size": 2487,
+      "sha256": "fa378d457249331c7d6b3c427454681787e5072e6c27f9a8b9b1ed1575ea43fb"
+    },
+    {
+      "path": "app_settings.example.json",
+      "size": 254,
+      "sha256": "9db79140546df94ff1a10393ecd8322a4900401048cdf8aac5c7fde9455bb65e"
+    },
+    {
+      "path": "scripts/local_paddleocr_invoice_to_xlsx.py",
+      "size": 102429,
+      "sha256": "d3fe37164402430a1269ef72dfa5d28bf7d1bb60d618c2efc3ef39cded3bcdcd"
+    },
+    {
+      "path": "scripts/match-existing-products.py",
+      "size": 22424,
+      "sha256": "b38e0bbd14508d3cc637d9f1dfdfd95cdd103418118a1989a70acbba418d9d00"
+    },
+    {
+      "path": "scripts/review-invoice-product-check.py",
+      "size": 38001,
+      "sha256": "29ad9fd672248ba162fcb4fad8ca8ae2ffdd110fd87adfdc8850f691752a5d7f"
+    },
+    {
+      "path": "scripts/fill-import-templates.ps1",
+      "size": 33837,
+      "sha256": "7ff0cacf63b24d5c52529d7e1874db3becbdd0c2131033de5174e48e6caf97ef"
+    },
+    {
+      "path": "reference_data/OCR設定.json",
+      "size": 115,
+      "sha256": "b31418412421d9a46c1cf21cd9e6a02f83f9aeddeea4a16c9de017dda1083149"
+    },
+    {
+      "path": "reference_data/產品資料輸出.CSV",
+      "size": 7153998,
+      "sha256": "d9f5a0cd4ca5afbee215316dbd2b5ff2d28188529cee3cf2ef2a1edf6905c7be"
+    },
+    {
+      "path": "reference_data/產品比對身份關鍵詞.csv",
+      "size": 467,
+      "sha256": "50d576bb5efe9666cfe37d300d45974cc0fe34c9f005a6cd150921a577c94c07"
+    },
+    {
+      "path": "reference_data/品牌括號命名規則.csv",
+      "size": 29865,
+      "sha256": "00fce120c3d2bc53f23ae3c0e8f6dfe74de65dc5029cc574489f2102dfc237a0"
+    },
+    {
+      "path": "reference_data/廠商代號.xlsx",
+      "size": 7926,
+      "sha256": "01296ae03f80218d44ec0c64ec938cbd08e79de78e65a36e26810eab91043f8d"
+    },
+    {
+      "path": "reference_data/建檔用.xls",
+      "size": 30720,
+      "sha256": "575c13442728450b2363ac327bfe0ea650737e663c2bd827a78ba1a1f00c82da"
+    },
+    {
+      "path": "reference_data/採購單匯入範例.xls",
+      "size": 27648,
+      "sha256": "0508f5fcd057630ddea32fa3fe32e9f226d2c9d95390ebaa6efc942ceee9ef87"
+    }
+  ]
+}
