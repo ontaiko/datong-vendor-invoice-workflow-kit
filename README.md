@@ -11,6 +11,8 @@
 
 原本的 Codex 安裝流程與 `install.ps1` 維持不變，不會自動安裝桌面 APP。需要不透過 AI 操作時，可另外使用 `desktop-app`。
 
+只需要 Windows APP 的電腦，可直接從 [GitHub Releases](https://github.com/ontaiko/datong-vendor-invoice-workflow-kit/releases) 下載最新版 `Datong-Invoice-Assistant-Setup-*.exe`，雙擊後完成 APP、專用 OCR 引擎與離線模型安裝。
+
 ## 安裝方式
 
 最簡單方式：在同事的 Codex 裡貼上：
@@ -93,6 +95,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File ".\install.ps1"
 - APP 必要參考資料與舊快照 SHA256 防護
 - 自動回歸測試
 - `build_exe.ps1` 與 `package-manifest.json`
+- `installer` 一鍵安裝、升級備份、安裝驗證與解除安裝設定
 
 操作、環境需求與重新打包方式請看：[Windows APP 使用說明](desktop-app/README.md)。
 

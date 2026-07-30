@@ -4,6 +4,40 @@
 
 APP 啟動檢查、OCR、產品比對、覆核與 PowerShell／Excel 正式輸出都以背景隱藏模式執行，不會另外彈出 CMD 或 PowerShell 視窗。
 
+## 一鍵安裝
+
+到 [GitHub Releases](https://github.com/ontaiko/datong-vendor-invoice-workflow-kit/releases) 下載最新版：
+
+```text
+Datong-Invoice-Assistant-Setup-v1.0.0.exe
+```
+
+雙擊後會自動完成：
+
+1. 將 APP 安裝到 `%LOCALAPPDATA%\Programs\大統進貨助手`。
+2. 建立開始功能表與桌面捷徑。
+3. 偵測或安裝 Python 3.12，並在 APP 資料夾建立專用 OCR 環境。
+4. 安裝 PaddleOCR、OpenCV、RapidFuzz、openpyxl 等本機套件。
+5. 安裝並逐檔驗證離線 OCR 模型。
+6. 自動產生目前電腦可用的 `app_settings.json`，最後執行 APP 自我檢查。
+
+第一次安裝需要網路下載 Python 套件，依網路與電腦速度可能需要數分鐘；完成後日常 OCR、產品比對與命名規則不需要 ChatGPT、Codex 或雲端 AI。正式輸出 `.xls` 仍需要桌面版 Microsoft Excel。
+
+安裝包尚未使用商用程式碼簽章憑證；Windows SmartScreen 可能顯示未知發行者。請只從本 repo 的 Releases 下載，並以 Release 一併提供的 `.sha256` 核對檔案。
+
+### 更新與資料保留
+
+直接執行新版安裝程式即可升級。升級時會：
+
+- 覆蓋 APP、流程腳本與 OCR 引擎規格。
+- 保留 `app_settings.json`、產品資料、命名規則、廠商代號、OCR 設定與匯入範本。
+- 先把既有設定及 `reference_data` 備份到 `user-data-backups\pre-update-日期時間`。
+- 重新使用原有專用 OCR 環境；只補裝有變動的套件。
+
+從 Windows「已安裝的應用程式」解除安裝時，APP 與專用 Python 環境會移除，但設定、參考資料與升級備份會保留，避免日後重裝遺失規則。
+
+開始功能表的「驗證安裝」可隨時重新檢查檔案、Python 套件與 APP 自我測試。
+
 ## 開啟 APP
 
 雙擊：
@@ -91,7 +125,7 @@ reference_data\
 }
 ```
 
-未來安裝程式會依其他電腦的使用者路徑自動產生此檔，不要求人工修改。
+一鍵安裝程式會依其他電腦的使用者路徑自動產生此檔，不要求人工修改。
 
 ## 自我檢查
 
@@ -140,7 +174,15 @@ python -X utf8 ".\tests\run_yuanda_ocr_regression.py" `
 powershell -NoProfile -ExecutionPolicy Bypass -File ".\build_exe.ps1"
 ```
 
-建置前會產生 `package-manifest.json`，記錄所有必要腳本、規則、資料與範本的 SHA256。這是未來製作一鍵安裝包與安裝後完整性驗證的基礎。
+建置前會產生 `package-manifest.json`，記錄所有必要腳本、規則、資料、範本與安裝腳本的 SHA256。
+
+重新製作安裝包：
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File ".\installer\build-installer.ps1" -Version "1.0.0"
+```
+
+輸出位於 `dist-installer`，並同時產生 SHA256 與 Release manifest。
 
 ## 已驗證實圖
 

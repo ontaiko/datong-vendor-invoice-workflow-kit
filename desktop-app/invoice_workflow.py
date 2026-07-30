@@ -172,6 +172,7 @@ def python_exe(project_root: Path = PROJECT_ROOT) -> Path:
     )
     candidates = [
         Path(configured).expanduser() if configured else None,
+        APP_DIR / "engine" / ".venv" / "Scripts" / "python.exe",
         Path(os.environ.get("LOCALAPPDATA", "")) / "Programs" / "Python" / "Python312" / "python.exe",
         Path(sys.executable) if not getattr(sys, "frozen", False) else None,
         Path(shutil.which("python") or ""),
@@ -235,7 +236,10 @@ def sync_reference_data(project_root: Path = PROJECT_ROOT) -> list[str]:
                     # copy and let the normal date check report the problem.
                     should_copy = False
             else:
-                should_copy = True
+                # Preserve newer APP-side edits during upgrades or portable use.
+                # Workspace reference files only replace the installed copy when
+                # they are actually newer, rather than merely different.
+                should_copy = source.stat().st_mtime > target.stat().st_mtime
         if should_copy:
             shutil.copy2(source, target)
             synced.append(name)

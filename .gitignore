@@ -14,3 +14,4 @@ project/建檔進貨用/**/*.xls
 desktop-app/app_settings.json
 desktop-app/*.spec
 desktop-app/legacy_*/
+desktop-app/dist-installer/
